@@ -14,6 +14,8 @@ const MASK_ZOOM: u8 = 13;
 /// Morphological closing radius, in pixels; bridges gaps up to `2 * radius`.
 /// `0` disables closing (aggregation comes only from the resolution coarsening).
 const CLOSE_RADIUS: usize = 0;
+/// Cull merged blobs smaller than this, measured in raster pixels^2
+const MIN_BLOB_PIXELS: f64 = 3.0;
 /// Pixels per axis.
 const W: usize = 1 << MASK_ZOOM;
 
@@ -95,6 +97,11 @@ impl PolygonMask {
         let mut out = Vec::new();
         for contour in &contours {
             for poly in &contour.geometry().0 {
+                // Cull tiny blobs (measured in raster pixels, before reprojection)
+                // so isolated 1–2 px cells don't become stray rectangles.
+                if ring_area_px(poly.exterior()) < MIN_BLOB_PIXELS {
+                    continue;
+                }
                 let ext: Vec<Coord> = poly
                     .exterior()
                     .0
@@ -159,6 +166,22 @@ fn pixel_to_merc(gx: f64, gy: f64) -> Coord {
         x: gx / n * MERCATOR_EXTENT - MERCATOR_MAX,
         y: MERCATOR_MAX - gy / n * MERCATOR_EXTENT,
     }
+}
+
+/// Shoelace area of a ring in raster pixels^2 (grid coordinates, holes ignored).
+fn ring_area_px(ring: &LineString) -> f64 {
+    let pts = &ring.0;
+    let n = pts.len();
+    if n < 3 {
+        return 0.0;
+    }
+    let mut sum = 0.0;
+    let mut j = n - 1;
+    for i in 0..n {
+        sum += (pts[j].x + pts[i].x) * (pts[j].y - pts[i].y);
+        j = i;
+    }
+    sum.abs() * 0.5
 }
 
 /// Bounding box (inclusive) of set pixels, or `None` if the mask is empty.
