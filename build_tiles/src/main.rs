@@ -1,5 +1,6 @@
 pub mod classifier;
 pub mod extractor;
+pub mod mask;
 pub mod node_cache;
 pub mod shapes;
 pub mod sink;
@@ -266,6 +267,11 @@ fn main() {
     println!("Road junctions: {}", connectivity.junction_count());
 
     let sink = TileSink::new(&args.spill, params, ZOOMS.to_vec());
+    // Forests are streamed into a global raster mask for coarse-zoom aggregation;
+    // the tee forwards every shape to the sink (which skips raw forests at coarse
+    // zooms) while burning forests into the mask.
+    let forest_mask = mask::PolygonMask::new();
+    let feed = mask::PolygonTee::new(&sink, &forest_mask);
 
     println!("Extracting way geometry...");
     extractor::extract_ways(
@@ -274,7 +280,7 @@ fn main() {
         &way_tag_filter,
         &node_store,
         &connectivity,
-        &sink,
+        &feed,
         progress.clone(),
     );
     indicator.finish();
@@ -297,18 +303,18 @@ fn main() {
         &relation_tag_filter,
         &node_store,
         &member_ways,
-        &sink,
+        &feed,
         progress.clone(),
     );
     indicator.finish();
     indicator.unset_length();
 
     println!("Extracting place labels...");
-    extractor::extract_place_labels(&mut osm_reader, &index, &sink, progress);
+    extractor::extract_place_labels(&mut osm_reader, &index, &feed, progress);
     indicator.finish();
     indicator.unset_length();
 
-    // ─────────────────────────── WATER starts here ───────────────────────────
+    // ─────────────────────────── WATER coastline polygons ───────────────────────────
     let merged_water = {
         let water = read_water_polygons(&args.water_shapefile);
         println!("water polygons : {}", water.len());
@@ -319,6 +325,18 @@ fn main() {
     merged_water.0.into_par_iter().for_each(|poly| {
         sink.push(Shape::Area(Area::new(AreaKind::Water, poly, -1, 0)));
     });
+
+    // ─────────────────────────── FOREST aggregation ──────────────────────────
+    // The mask was filled during extraction; close + vectorize it into merged
+    // forest blobs and clip those into the coarse (z <= AGG_MAX_ZOOM) tiles. Raw
+    // forests already covered the finer zooms via the extraction stream.
+    println!("Aggregating forests from mask...");
+    let merged_forests = forest_mask.merged_polygons();
+    println!("Merged forest polygons: {}", merged_forests.len());
+    merged_forests.into_par_iter().for_each(|poly| {
+        sink.push_aggregated(&Area::new(AreaKind::Forest, poly, 0, 0));
+    });
+
     sink.finish().unwrap();
     println!(
         "Geometry extraction complete — records spilled under {}",

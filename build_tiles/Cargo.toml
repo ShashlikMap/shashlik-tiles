@@ -17,6 +17,7 @@ hashbrown = { workspace = true }
 bytemuck = { workspace = true }
 zstd = "0.13"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
+contour = "0.13"
 
 [dev-dependencies]
 tokio = { workspace = true }

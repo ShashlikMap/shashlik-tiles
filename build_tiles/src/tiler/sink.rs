@@ -10,11 +10,20 @@
 use super::record::{TileGeometry, TileRecord};
 use super::spill::SpillWriter;
 use super::{TILE_RENDER_PX, TileParams, grid};
-use crate::shapes::{Area, EdgeNode, Label, Road, Shape};
+use crate::shapes::{Area, AreaKind, EdgeNode, Label, Road, Shape};
 use crate::sink::ShapeSink;
 use geo::{Coord, MapCoords, SimplifyVw};
 use std::io;
 use std::path::Path;
+
+/// Coarsest zoom at which a shape is materialized from raw per-feature geometry.
+const AGG_MAX_ZOOM: u8 = 8;
+
+/// Whether a kind is materialized from the global aggregation mask at coarse
+#[inline]
+fn is_aggregated(kind: AreaKind) -> bool {
+    matches!(kind, AreaKind::Forest)
+}
 
 /// Streaming tiler: shape stream -> per-tile spill records, across all
 /// materialized zooms.
@@ -64,6 +73,27 @@ impl TileSink {
         if z < area.kind.min_zoom() {
             return; // class not shown at this (coarse) zoom
         }
+        // Aggregated kinds are materialized from the mask at coarse zooms; the raw
+        // geometry is only used at finer ones (see `push_aggregated`).
+        if is_aggregated(area.kind) && z <= AGG_MAX_ZOOM {
+            return;
+        }
+        self.clip_area_at(area, z);
+    }
+
+    /// Clip the merged geometry of an aggregated kind into the coarse tiles
+    pub fn push_aggregated(&self, area: &Area) {
+        for &z in &self.zooms {
+            if z > AGG_MAX_ZOOM || z < area.kind.min_zoom() {
+                continue;
+            }
+            self.clip_area_at(area, z);
+        }
+    }
+
+    /// Project → simplify → clip → spill one area at one zoom (no visibility
+    /// policy; callers gate the zoom).
+    fn clip_area_at(&self, area: &Area, z: u8) {
         let zp = self.zoom_params(z);
         let (eps, full_detail) = self.simplify(&zp, z);
         let min_area = 4.0 * (self.base.extent as f64 / TILE_RENDER_PX).powi(2);

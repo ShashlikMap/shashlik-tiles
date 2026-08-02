@@ -103,7 +103,7 @@ impl AreaKind {
         match self {
             AreaKind::Land => 1,
             AreaKind::Water => 3,
-            AreaKind::Forest => 6,
+            AreaKind::Forest => 3,
             AreaKind::Grass => 12,
             AreaKind::Building => 14,
         }
@@ -115,7 +115,7 @@ impl AreaKind {
         match self {
             AreaKind::Land => 1,
             AreaKind::Water => 3,
-            AreaKind::Forest => 6,
+            AreaKind::Forest => 3,
             AreaKind::Grass => 12,
             AreaKind::Building => 16,
         }
