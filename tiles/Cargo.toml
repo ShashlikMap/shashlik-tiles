@@ -1,0 +1,17 @@
+[package]
+name = "tiles"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+util = { path = "../util" }
+geo = { workspace = true }
+hashbrown = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+bytemuck = { workspace = true }
+zstd = "0.13"
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+] }

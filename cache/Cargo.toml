@@ -1,0 +1,12 @@
+[package]
+name = "cache"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+osm_pbf = { path = "../osm_pbf" }
+bytemuck = { workspace = true }
+thiserror = { workspace = true }
+error-stack = { workspace = true }
+rayon = { workspace = true }
+memmap2 = { workspace = true }

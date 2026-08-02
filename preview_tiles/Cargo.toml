@@ -1,0 +1,13 @@
+[package]
+name = "preview_tiles"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tiles = { path = "../tiles" }
+winit = { version = "0.30" }
+wgpu = "30.0"
+anyhow = "1.0"
+lyon_tessellation = "1.0.20"
+bytemuck = { workspace = true }
+tokio = { workspace = true, features = ["full"] }

@@ -1,0 +1,22 @@
+[package]
+name = "build_tiles"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tiles = { path = "../tiles" }
+util = { path = "../util" }
+cache = { path = "../cache" }
+osm_pbf = { path = "../osm_pbf" }
+clap = { workspace = true }
+geo = { workspace = true }
+rayon = { workspace = true }
+shapefile = { version = "0.9" }
+indicatif = "0.18"
+hashbrown = { workspace = true }
+bytemuck = { workspace = true }
+zstd = "0.13"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
+[dev-dependencies]
+tokio = { workspace = true }

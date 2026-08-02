@@ -1,0 +1,19 @@
+[package]
+name = "osm_pbf"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+thiserror = { workspace = true }
+error-stack = { workspace = true }
+serde = { workspace = true }
+prost = { workspace = true }
+flate2 = { workspace = true }
+bytes = "1.12"
+itertools = { workspace = true }
+bytemuck = { workspace = true }
+hashbrown = { workspace = true }
+
+[build-dependencies]
+prost-build = { workspace = true }
+bytemuck = { workspace = true }

@@ -1,0 +1,234 @@
+//! Feature classification enums shared by the tile builder and the decoder.
+//!
+//! These are the semantic kinds the tile format encodes as `u8` ordinals; the
+//! writer maps geometry to them, the decoder maps them back. Kept dependency-free
+//! so both sides (and a client renderer) can use them.
+
+/// Road classification. `self as u8` is the wire ordinal; `RoadKind::from_u8`)
+/// is its inverse.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoadKind {
+    Motorway,
+    Trunk,
+    Primary,
+    Secondary,
+    Tertiary,
+    Unclassified,
+    Residential,
+    LivingStreet,
+    Service,
+    Footway,
+    Raceway,
+    Unknown,
+}
+
+impl RoadKind {
+    pub fn from_u8(v: u8) -> Option<Self> {
+        use RoadKind::*;
+        Some(match v {
+            0 => Motorway,
+            1 => Trunk,
+            2 => Primary,
+            3 => Secondary,
+            4 => Tertiary,
+            5 => Unclassified,
+            6 => Residential,
+            7 => LivingStreet,
+            8 => Service,
+            9 => Footway,
+            10 => Raceway,
+            11 => Unknown,
+            _ => return None,
+        })
+    }
+
+    /// Build threshold: coarsest zoom a road of this kind is materialized
+    /// into (a tile at zoom `z` stores it only if `z >= min_zoom`). Controls what
+    /// the archive contains, not what the renderer shows — see `Self::display_min_zoom`
+    pub fn min_zoom(self) -> u8 {
+        use RoadKind::*;
+        match self {
+            Motorway => 8,
+            Trunk | Primary => 10,
+            Secondary => 12,
+            Tertiary | Unclassified | Residential | Raceway => 14,
+            LivingStreet | Service | Footway | Unknown => 16,
+        }
+    }
+
+    /// Display threshold: coarsest camera zoom at which a road of this kind is
+    /// shown. Independent of `Self::min_zoom` so the renderer can
+    /// reveal / hide classes without rebuilding tiles (only ever hides more than
+    /// what a tile stores). Tune freely.
+    pub fn display_min_zoom(self) -> u8 {
+        use RoadKind::*;
+        match self {
+            Motorway => 8,
+            Trunk | Primary => 10,
+            Secondary => 12,
+            Tertiary | Unclassified | Residential | Raceway => 14,
+            LivingStreet | Service | Footway | Unknown => 16,
+        }
+    }
+}
+
+/// Areal-feature classification.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AreaKind {
+    Water,
+    Forest,
+    Grass,
+    Building,
+    Land,
+}
+
+impl AreaKind {
+    pub fn from_u8(v: u8) -> Option<Self> {
+        Some(match v {
+            0 => AreaKind::Water,
+            1 => AreaKind::Forest,
+            2 => AreaKind::Grass,
+            3 => AreaKind::Building,
+            4 => AreaKind::Land,
+            _ => return None,
+        })
+    }
+
+    /// Build threshold: coarsest zoom an area of this kind is materialized
+    /// into (also subject to the per-tile sub-pixel size cull). Controls what the
+    /// archive stores, not what the renderer shows — see `Self::display_min_zoom`
+    pub fn min_zoom(self) -> u8 {
+        match self {
+            AreaKind::Land => 1,
+            AreaKind::Water => 3,
+            AreaKind::Forest => 6,
+            AreaKind::Grass => 12,
+            AreaKind::Building => 14,
+        }
+    }
+
+    /// Display threshold: coarsest camera zoom at which an area of this kind
+    /// is shown. Independent of `Self::min_zoom` tune freely.
+    pub fn display_min_zoom(self) -> u8 {
+        match self {
+            AreaKind::Land => 1,
+            AreaKind::Water => 3,
+            AreaKind::Forest => 6,
+            AreaKind::Grass => 12,
+            AreaKind::Building => 16,
+        }
+    }
+}
+
+/// State of a road endpoint. Extraction produces only `Connected` (a junction)
+/// or `Disconnected` (a true dead-end); the tiler sets `Cut` where it clips a
+/// road at a tile boundary, so the renderer continues the line into the
+/// neighbouring tile instead of drawing an end cap.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EdgeNode {
+    Connected,
+    Disconnected,
+    Cut,
+}
+
+impl EdgeNode {
+    pub fn from_u8(v: u8) -> Option<Self> {
+        Some(match v {
+            0 => EdgeNode::Connected,
+            1 => EdgeNode::Disconnected,
+            2 => EdgeNode::Cut,
+            _ => return None,
+        })
+    }
+}
+
+/// Class of a text label. Place classes double as a priority ordering (lower
+/// ordinal = more important). `LabelClass::min_zoom` gives the
+/// coarsest zoom a label of the class appears at.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LabelClass {
+    City,
+    Town,
+    Village,
+    Suburb,
+    Hamlet,
+    Locality,
+    /// A named water body (lake, bay, …).
+    Water,
+    /// A named park / green space.
+    Park,
+}
+
+impl LabelClass {
+    pub fn from_u8(v: u8) -> Option<Self> {
+        use LabelClass::*;
+        Some(match v {
+            0 => City,
+            1 => Town,
+            2 => Village,
+            3 => Suburb,
+            4 => Hamlet,
+            5 => Locality,
+            6 => Water,
+            7 => Park,
+            _ => return None,
+        })
+    }
+
+    /// Build threshold: coarsest zoom a label of this class is materialized
+    /// into. See `Self::display_min_zoom` for the render-time
+    /// threshold.
+    pub fn min_zoom(self) -> u8 {
+        use LabelClass::*;
+        match self {
+            City => 4,
+            Town => 8,
+            Village => 11,
+            Suburb => 12,
+            Hamlet => 12,
+            Locality => 13,
+            Water => 8,
+            Park => 10,
+        }
+    }
+
+    /// Display threshold: coarsest camera zoom at which a label of this class
+    /// is shown. Independent of [`min_zoom`](Self::min_zoom); tune freely.
+    pub fn display_min_zoom(self) -> u8 {
+        use LabelClass::*;
+        match self {
+            City => 4,
+            Town => 8,
+            Village => 11,
+            Suburb => 12,
+            Hamlet => 12,
+            Locality => 13,
+            Water => 8,
+            Park => 10,
+        }
+    }
+
+    /// Renderer collision priority (lower = drawn first / wins collisions).
+    pub fn rank(self) -> u8 {
+        self as u8
+    }
+}
+
+/// Lane counts on each side of a road's centerline, relative to the geometry's
+/// direction (node order). A one-way road has `backward == 0` (or `forward == 0`
+/// for a reversed one-way).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Lanes {
+    pub forward: u8,
+    pub backward: u8,
+}
+
+impl Lanes {
+    pub fn new(forward: u8, backward: u8) -> Self {
+        Self { forward, backward }
+    }
+}
