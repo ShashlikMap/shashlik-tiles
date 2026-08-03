@@ -3,6 +3,7 @@ mod vertex;
 
 use std::{iter, sync::Arc};
 
+use clap::Parser;
 use tiles::view::{Camera, TILE_RENDER_PX};
 use tiles::{LatLon, MERCATOR_EXTENT, Mercator};
 use wgpu::util::DeviceExt;
@@ -13,6 +14,12 @@ use winit::{
     keyboard::{KeyCode, PhysicalKey},
     window::Window,
 };
+
+#[derive(Parser)]
+pub struct Args {
+    /// PMTile file path/url
+    pmtiles: Option<String>,
+}
 
 /// Nominal stroke width in screen pixels (baked per scene; scales with zoom
 /// within a tile band).
@@ -60,7 +67,6 @@ pub struct State {
     config: wgpu::SurfaceConfiguration,
     is_surface_configured: bool,
     render_pipeline: wgpu::RenderPipeline,
-    // NEW!
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     num_indices: u32,
@@ -79,7 +85,7 @@ pub struct State {
 }
 
 impl State {
-    async fn new(window: Arc<Window>) -> anyhow::Result<State> {
+    async fn new(window: Arc<Window>, args: &Args) -> anyhow::Result<State> {
         let size = window.inner_size();
 
         // The instance is a handle to our GPU
@@ -220,10 +226,13 @@ impl State {
             cache: None,
         });
 
-        // Open the archive and build the initial scene at a Tokyo view.
-        let mut world =
-            map::open_world("https://d41xpk1mpwqmt.cloudfront.net/planet.pmtiles").await;
+        let source = args
+            .pmtiles
+            .as_deref()
+            .unwrap_or("https://d41xpk1mpwqmt.cloudfront.net/planet.pmtiles");
+        let mut world = map::open_world(source).await;
         let camera = Camera::new(
+            // Tokyo starting point
             LatLon::new(35.677045, 139.752748).to_mercator(),
             10.0,
             [size.width.max(1) as f32, size.height.max(1) as f32],
@@ -345,7 +354,7 @@ impl State {
 
     /// Zoom by `dz` levels (top-down, toward the centre).
     fn zoom_by(&mut self, dz: f64) {
-        self.camera.zoom = (self.camera.zoom + dz).clamp(3.0, 18.0);
+        self.camera.zoom = (self.camera.zoom + dz).clamp(3.0, 20.0);
         self.apply_camera();
     }
 
@@ -449,12 +458,13 @@ impl State {
 }
 
 pub struct App {
+    args: Args,
     state: Option<State>,
 }
 
 impl App {
-    pub fn new() -> Self {
-        Self { state: None }
+    pub fn new(args: Args) -> Self {
+        Self { args, state: None }
     }
 }
 
@@ -466,7 +476,7 @@ impl ApplicationHandler<State> for App {
         self.state = Some(
             tokio::task::block_in_place(|| {
                 let h = tokio::runtime::Handle::current();
-                h.block_on(State::new(window))
+                h.block_on(State::new(window, &self.args))
             })
             .unwrap(),
         );
@@ -541,10 +551,10 @@ impl ApplicationHandler<State> for App {
     }
 }
 
-pub fn run() -> anyhow::Result<()> {
+pub fn run(args: Args) -> anyhow::Result<()> {
     let event_loop = EventLoop::with_user_event().build()?;
     {
-        let mut app = App::new();
+        let mut app = App::new(args);
         event_loop.run_app(&mut app)?;
     }
 
@@ -553,5 +563,6 @@ pub fn run() -> anyhow::Result<()> {
 
 #[tokio::main]
 async fn main() {
-    run().unwrap()
+    let args = Args::parse();
+    run(args).unwrap()
 }

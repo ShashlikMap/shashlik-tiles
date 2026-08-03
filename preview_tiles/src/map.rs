@@ -3,25 +3,22 @@ use lyon_tessellation::{
     FillOptions, FillRule, FillTessellator, StrokeOptions, StrokeTessellator, geom::Point,
 };
 use tiles::decode::{AreaKind, DecodedTile, RoadKind, Scene, SceneView};
-use tiles::reader::{HttpRangeReader, PmTilesReader};
+use tiles::reader::{FileRangeReader, HttpRangeReader, PmTilesReader, RangeReader};
 use tiles::view::TileCache;
 
-// pub type World = SceneView<TileCache<PmTilesReader<FileRangeReader>, DecodedTile>>;
-// pub async fn open_world(path: &str) -> World {
-//     let reader = FileRangeReader::open(path).await.unwrap();
-//     let source = PmTilesReader::open(reader).await.unwrap();
-//     let cache = TileCache::new(source, vec![4, 6, 8, 10, 12, 14], 256 << 20, 1);
-//     SceneView::new(cache)
-// }
+pub type World = SceneView<TileCache<PmTilesReader<Box<dyn RangeReader>>, DecodedTile>>;
 
-pub type World = SceneView<TileCache<PmTilesReader<HttpRangeReader>, DecodedTile>>;
-
-/// Open a PMTiles archive at `url` over HTTP(S) and wrap it in a decoding,
-/// camera-driven view.
-pub async fn open_world(url: &str) -> World {
-    let reader = HttpRangeReader::open(url).await.unwrap();
+/// Open a PMTiles archive from a local path or an `http(s)://` URL (auto-detected)
+/// and wrap it in a decoding, camera-driven view.
+pub async fn open_world(source: &str) -> World {
+    let reader: Box<dyn RangeReader> =
+        if source.starts_with("http://") || source.starts_with("https://") {
+            Box::new(HttpRangeReader::open(source).await.unwrap())
+        } else {
+            Box::new(FileRangeReader::open(source).await.unwrap())
+        };
     let source = PmTilesReader::open(reader).await.unwrap();
-    let cache = TileCache::new(source, vec![4, 6, 8, 10, 12, 14], 256 << 20, 1);
+    let cache = TileCache::new(source, vec![4, 6, 8, 10, 12, 14], 256 << 20, 0);
     SceneView::new(cache)
 }
 
@@ -103,6 +100,7 @@ fn area_color(kind: AreaKind) -> u32 {
 fn road_color(kind: RoadKind) -> u32 {
     use RoadKind::*;
     match kind {
+        MajorRoad => 8, // merged low-zoom network, styled distinctly
         Motorway | Trunk | Primary => 5,
         Secondary | Tertiary => 6,
         _ => 7,
