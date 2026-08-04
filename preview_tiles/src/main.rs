@@ -313,8 +313,8 @@ impl State {
                 return;
             }
 
-            println!(
-                "new scene {} {:?} {}",
+            log::debug!(
+                "New scene with {} verteces, Camera: {:?} {}",
                 data.verteces.len(),
                 self.camera.center,
                 self.camera.zoom
@@ -564,5 +564,6 @@ pub fn run(args: Args) -> anyhow::Result<()> {
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
+    env_logger::init();
     run(args).unwrap()
 }

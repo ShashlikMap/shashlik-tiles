@@ -12,3 +12,5 @@ lyon_tessellation = "1.0.20"
 bytemuck = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 clap = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }

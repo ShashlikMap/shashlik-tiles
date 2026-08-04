@@ -7,7 +7,7 @@
 /// Road classification. `self as u8` is the wire ordinal; `RoadKind::from_u8`)
 /// is its inverse.
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RoadKind {
     Motorway,
     Trunk,
@@ -21,6 +21,8 @@ pub enum RoadKind {
     Footway,
     Raceway,
     Unknown,
+    MajorRoad,
+    Rail,
 }
 
 impl RoadKind {
@@ -39,6 +41,8 @@ impl RoadKind {
             9 => Footway,
             10 => Raceway,
             11 => Unknown,
+            12 => MajorRoad,
+            13 => Rail,
             _ => return None,
         })
     }
@@ -49,9 +53,10 @@ impl RoadKind {
     pub fn min_zoom(self) -> u8 {
         use RoadKind::*;
         match self {
-            Motorway => 8,
-            Trunk | Primary => 10,
+            MajorRoad => 4, // merged low-zoom network
+            Motorway | Trunk | Primary => 10,
             Secondary => 12,
+            Rail => 10,
             Tertiary | Unclassified | Residential | Raceway => 14,
             LivingStreet | Service | Footway | Unknown => 16,
         }
@@ -59,13 +64,13 @@ impl RoadKind {
 
     /// Display threshold: coarsest camera zoom at which a road of this kind is
     /// shown. Independent of `Self::min_zoom` so the renderer can
-    /// reveal / hide classes without rebuilding tiles (only ever hides more than
-    /// what a tile stores). Tune freely.
+    /// reveal / hide classes without rebuilding tiles
     pub fn display_min_zoom(self) -> u8 {
         use RoadKind::*;
         match self {
-            Motorway => 8,
-            Trunk | Primary => 10,
+            MajorRoad => 4,
+            Motorway | Trunk | Primary => 10,
+            Rail => 10,
             Secondary => 12,
             Tertiary | Unclassified | Residential | Raceway => 14,
             LivingStreet | Service | Footway | Unknown => 16,
@@ -157,9 +162,7 @@ pub enum LabelClass {
     Suburb,
     Hamlet,
     Locality,
-    /// A named water body (lake, bay, …).
     Water,
-    /// A named park / green space.
     Park,
 }
 

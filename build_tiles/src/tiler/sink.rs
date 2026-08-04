@@ -19,6 +19,10 @@ use std::path::Path;
 /// Coarsest zoom at which a shape is materialized from raw per-feature geometry.
 const AGG_MAX_ZOOM: u8 = 8;
 
+/// Merged major roads are clipped into tiles up to this zoom; raw ways take over
+/// at z >= 10 (their `min_zoom`), so the ranges don't overlap.
+const ROAD_AGG_MAX_ZOOM: u8 = 8;
+
 /// Whether a kind is materialized from the global aggregation mask at coarse
 #[inline]
 fn is_aggregated(kind: AreaKind) -> bool {
@@ -141,6 +145,26 @@ impl TileSink {
         if z < road.kind.min_zoom() {
             return; // class not shown at this (coarse) zoom
         }
+        self.clip_road_at(road, z);
+    }
+
+    /// Clip a merged **major** road (continuous line assembled from many ways)
+    /// into the coarse tiles (`z <= ROAD_AGG_MAX_ZOOM`) — the counterpart to the
+    /// raw-way path in [`push_road`], which only runs at `z >= 10`. No overlap:
+    /// the two zoom ranges are disjoint. Called once per merged line after
+    /// extraction.
+    pub fn push_aggregated_road(&self, road: &Road) {
+        for &z in &self.zooms {
+            if z > ROAD_AGG_MAX_ZOOM {
+                continue;
+            }
+            self.clip_road_at(road, z);
+        }
+    }
+
+    /// Project → simplify → clip → spill one road at one zoom (no visibility
+    /// policy; callers gate the zoom).
+    fn clip_road_at(&self, road: &Road, z: u8) {
         let zp = self.zoom_params(z);
         let (eps, full_detail) = self.simplify(&zp, z);
 

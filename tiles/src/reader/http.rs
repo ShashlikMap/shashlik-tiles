@@ -29,6 +29,8 @@ impl RangeReader for HttpRangeReader {
         if len == 0 {
             return Ok(Vec::new());
         }
+
+        let start = std::time::SystemTime::now();
         // HTTP byte ranges are inclusive on both ends.
         let end = offset + len as u64 - 1;
         let resp = self
@@ -41,6 +43,14 @@ impl RangeReader for HttpRangeReader {
 
         let status = resp.status();
         let body = resp.bytes().await.map_err(reqwest_err)?;
+
+        let took = std::time::SystemTime::now()
+            .duration_since(start)
+            .unwrap()
+            .as_millis();
+
+        log::debug!("Fetched {:.2}KB, over {took}ms", (len as f64) / 1000.0);
+
         match status {
             // Normal case: the server honoured the range.
             StatusCode::PARTIAL_CONTENT => Ok(body.to_vec()),

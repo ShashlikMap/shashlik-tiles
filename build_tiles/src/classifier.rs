@@ -48,6 +48,10 @@ sid_constructor!(
         living_street: Option<u32>,
         road: Option<u32>,
         raceway: Option<u32>,
+        railway: Option<u32>,
+        rail: Option<u32>,
+        light_rail: Option<u32>,
+        narrow_gauge: Option<u32>,
         natural: Option<u32>,
         water: Option<u32>,
         building: Option<u32>,
@@ -285,6 +289,27 @@ impl BlockShapeClassifier {
                     && &tag.value == raceway
                 {
                     return ShapeClassification::Road(RoadKind::Raceway);
+                }
+            }
+
+            // Railways: heavy `rail`, plus `light_rail` / `narrow_gauge`.
+            if let Some(railway) = &self.railway
+                && &tag.key == railway
+            {
+                if let Some(rail) = &self.rail
+                    && &tag.value == rail
+                {
+                    return ShapeClassification::Road(RoadKind::Rail);
+                }
+                if let Some(light_rail) = &self.light_rail
+                    && &tag.value == light_rail
+                {
+                    return ShapeClassification::Road(RoadKind::Rail);
+                }
+                if let Some(narrow_gauge) = &self.narrow_gauge
+                    && &tag.value == narrow_gauge
+                {
+                    return ShapeClassification::Road(RoadKind::Rail);
                 }
             }
 

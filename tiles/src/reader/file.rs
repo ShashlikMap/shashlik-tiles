@@ -28,15 +28,18 @@ impl FileRangeReader {
 #[async_trait]
 impl RangeReader for FileRangeReader {
     async fn read_range(&self, offset: u64, len: usize) -> io::Result<Vec<u8>> {
-        println!("READ {len}");
         let file = self.file.clone();
-        tokio::task::spawn_blocking(move || {
+        let data = tokio::task::spawn_blocking(move || {
             let mut buf = vec![0u8; len];
             file.read_exact_at(&mut buf, offset)?;
             io::Result::Ok(buf)
         })
         .await
-        .map_err(join_err)?
+        .map_err(join_err)?;
+
+        log::debug!("Fetched {:.2}KB", (len as f64) / 1000.0);
+
+        data
     }
 }
 

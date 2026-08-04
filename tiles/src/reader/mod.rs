@@ -20,6 +20,16 @@ pub trait RangeReader: Send + Sync {
     async fn read_range(&self, offset: u64, len: usize) -> io::Result<Vec<u8>>;
 }
 
+/// Forward through a boxed reader, so `Box<dyn RangeReader>` is itself a
+/// `RangeReader`. This lets a caller pick the concrete transport (file vs HTTP)
+/// at runtime and still build a single, non-generic `PmTilesReader` type.
+#[async_trait]
+impl RangeReader for Box<dyn RangeReader> {
+    async fn read_range(&self, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+        (**self).read_range(offset, len).await
+    }
+}
+
 /// High-level, format-agnostic access to a tile archive.
 #[async_trait]
 pub trait TileSource: Send + Sync {

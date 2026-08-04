@@ -200,13 +200,17 @@ pub struct SceneArea {
     pub clip: Vec<bool>,
 }
 
+pub struct SceneLabel {
+    pub class: LabelClass,
+    pub rank: u8,
+    pub anchor: [i32; 2],
+    pub name: String,
+}
+
 impl SceneArea {
     /// The area as a `geo::Polygon<f64>` in absolute scene coordinates (ring 0 =
     /// exterior, the rest = holes) — for `geo` algorithms (area, centroid, ...).
-    /// Scene `i32` coordinates cast losslessly to `f64`.
-    ///
-    /// For *rendering*, feed the rings straight to a tessellator in
-    /// scene-relative coordinates (see `wgpu_renderer`) rather than going through `geo`
+    /// Scene `i32` coordinates cast losslessly to `f64`
     pub fn to_polygon(&self) -> Polygon<f64> {
         build_polygon(&self.rings, |[x, y]| Coord {
             x: x as f64,
@@ -244,13 +248,6 @@ fn build_polygon<T: geo::CoordNum>(
     }
 }
 
-pub struct SceneLabel {
-    pub class: LabelClass,
-    pub rank: u8,
-    pub anchor: [i32; 2],
-    pub name: String,
-}
-
 /// One geometry yielded from a [`Scene`].
 pub enum Feature<'a> {
     Road(&'a SceneRoad),
@@ -282,6 +279,15 @@ impl Scene {
             .or_else(|| visible.first())
             .map(|v| v.tile.z)
             .unwrap_or(0);
+
+        // Never filter below the level of the tiles we actually loaded. The tile
+        // level snaps to the nearest materialized zoom (switches at x.0), while
+        // `display_zoom` is `round(camera)` (switches at x.5) — so in the half-zoom
+        // band between them we'd load, say, z10 tiles yet filter as if at z9,
+        // hiding every class materialized at z10 (motorway/trunk/…). Clamping up to
+        // `target_zoom` closes that gap; overzoom beyond the finest level still
+        // reveals more, since there `display_zoom > target_zoom`.
+        let display_zoom = display_zoom.max(target_zoom);
 
         let mut extent = 0u16;
         let mut weldable: Vec<SceneRoad> = Vec::new(); // exact-tile roads to join

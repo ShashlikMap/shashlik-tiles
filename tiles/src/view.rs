@@ -123,7 +123,7 @@ impl TilePayload for Vec<u8> {
 }
 
 /// One tile the renderer should draw this frame.
-pub struct VisibleTile<T> {
+pub struct VisibleTile<T: ?Sized> {
     /// The tile slot to fill on screen.
     pub tile: Tile,
     /// The payload to draw it with.
@@ -143,13 +143,23 @@ impl<T> VisibleTile<T> {
 
 /// High-level, camera-driven tile access
 #[async_trait]
-pub trait TileView<T: TilePayload>: Send + Sync {
+pub trait TileView<T: TilePayload + ?Sized>: Send + Sync {
     /// Recompute the visible set for `cam`, load any missing tiles, and return
     /// what to draw (loaded tiles, coarser fallbacks where not yet available).
     async fn update(&self, cam: &Camera) -> Vec<VisibleTile<T>>;
 
     /// Non-blocking peek at a cached tile.
     fn get(&self, tile: Tile) -> Option<Arc<T>>;
+}
+#[async_trait]
+impl<A: TilePayload, T: TileView<A>> TileView<A> for Box<T> {
+    async fn update(&self, cam: &Camera) -> Vec<VisibleTile<A>> {
+        (**self).update(cam).await
+    }
+
+    fn get(&self, tile: Tile) -> Option<Arc<A>> {
+        (**self).get(tile)
+    }
 }
 
 /// A `TileView` backed by a `TileSource` and an LRU cache.

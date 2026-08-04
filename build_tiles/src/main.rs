@@ -1,7 +1,9 @@
 pub mod classifier;
 pub mod extractor;
+pub mod major_roads;
 pub mod mask;
 pub mod node_cache;
+pub mod route_roads;
 pub mod shapes;
 pub mod sink;
 pub mod tiler;
@@ -40,9 +42,9 @@ struct Args {
     #[arg(long)]
     pmtiles: String,
 
-    /// Path to ocean water polygon shapefile
+    /// Path to ocean water polygon shapefile, shorelines will be skipped if not provided
     #[arg(long)]
-    water_shapefile: String,
+    water_shapefile: Option<String>,
 }
 
 /// Even-odd ray cast: is `(px, py)` inside the ring?
@@ -145,12 +147,16 @@ fn indicator_style() -> ProgressStyle {
     .progress_chars("#>-")
 }
 
-/// Progress callback shared across passes; lazily adopts each pass's length.
+/// Progress callback shared across passes. Adopts the reported length on every
+/// call (a pass's length is constant, so this is idempotent within a pass) and
+/// tracks it when it changes — so a step that runs several internal passes over
+/// differently-sized sections (e.g. `route_roads::build`) shows the right total
+/// for each, without the caller resetting between them.
 fn progress_bar() -> (ProgressBar, Arc<impl Fn(u64, u64) + Send + Sync>) {
     let indicator = ProgressBar::new(0).with_style(indicator_style());
     let inner = indicator.clone();
     let progress = Arc::new(move |pos, len| {
-        if inner.length().unwrap_or_default() == 0 {
+        if inner.length() != Some(len) {
             inner.set_length(len);
         }
         inner.set_position(pos);
@@ -167,6 +173,10 @@ fn main() {
 
     let way_tag_filter = TagFilter(vec![
         vec![("highway".into(), vec![])],
+        vec![(
+            "railway".into(),
+            vec!["rail".into(), "light_rail".into(), "narrow_gauge".into()],
+        )],
         vec![("natural".into(), vec!["water".into(), "wood".into()])],
         vec![(
             "landuse".into(),
@@ -310,22 +320,23 @@ fn main() {
     indicator.unset_length();
 
     println!("Extracting place labels...");
-    extractor::extract_place_labels(&mut osm_reader, &index, &feed, progress);
+    extractor::extract_place_labels(&mut osm_reader, &index, &feed, progress.clone());
     indicator.finish();
     indicator.unset_length();
 
     // ─────────────────────────── WATER coastline polygons ───────────────────────────
-    let merged_water = {
-        let water = read_water_polygons(&args.water_shapefile);
-        println!("water polygons : {}", water.len());
-        geo::algorithm::bool_ops::unary_union(&water)
-    };
-    println!("Merged water polygons: {}", merged_water.0.len());
+    if let Some(water_shapefile) = &args.water_shapefile {
+        let merged_water = {
+            let water = read_water_polygons(water_shapefile);
+            println!("water polygons : {}", water.len());
+            geo::algorithm::bool_ops::unary_union(&water)
+        };
+        println!("Merged water polygons: {}", merged_water.0.len());
 
-    merged_water.0.into_par_iter().for_each(|poly| {
-        sink.push(Shape::Area(Area::new(AreaKind::Water, poly, -1, 0)));
-    });
-
+        merged_water.0.into_par_iter().for_each(|poly| {
+            sink.push(Shape::Area(Area::new(AreaKind::Water, poly, -1, 0)));
+        });
+    }
     // ─────────────────────────── FOREST aggregation ──────────────────────────
     // The mask was filled during extraction; close + vectorize it into merged
     // forest blobs and clip those into the coarse (z <= AGG_MAX_ZOOM) tiles. Raw
@@ -336,6 +347,19 @@ fn main() {
     merged_forests.into_par_iter().for_each(|poly| {
         sink.push_aggregated(&Area::new(AreaKind::Forest, poly, 0, 0));
     });
+
+    // ────────────────────────── MAJOR ROAD aggregation ───────────────────────
+    // Build the low-zoom network from road route relations that touch a motorway,
+    // joining their member ways into continuous lines clipped into the coarse
+    // (z <= ROAD_AGG_MAX_ZOOM) tiles. Raw ways cover z >= 10.
+    println!("Aggregating major roads from route relations...");
+    route_roads::build(
+        &mut osm_reader,
+        &index,
+        &node_store,
+        &sink,
+        progress.clone(),
+    );
 
     sink.finish().unwrap();
     println!(
