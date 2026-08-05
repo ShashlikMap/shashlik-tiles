@@ -102,6 +102,7 @@ fn road_color(kind: RoadKind) -> u32 {
     match kind {
         MajorRoad => 8, // merged low-zoom network, styled distinctly
         Rail => 9,
+        RailMinor => 10,
         Motorway | Trunk | Primary => 5,
         Secondary | Tertiary => 6,
         _ => 7,

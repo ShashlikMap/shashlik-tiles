@@ -22,7 +22,11 @@ pub enum RoadKind {
     Raceway,
     Unknown,
     MajorRoad,
+    /// Heavy mainline railway (`railway=rail`) — the significant rail tier.
     Rail,
+    /// Minor railway: light rail / narrow gauge. Local/urban, shown only at
+    /// finer zooms than [`Rail`](RoadKind::Rail).
+    RailMinor,
 }
 
 impl RoadKind {
@@ -43,6 +47,7 @@ impl RoadKind {
             11 => Unknown,
             12 => MajorRoad,
             13 => Rail,
+            14 => RailMinor,
             _ => return None,
         })
     }
@@ -56,7 +61,8 @@ impl RoadKind {
             MajorRoad => 4, // merged low-zoom network
             Motorway | Trunk | Primary => 10,
             Secondary => 12,
-            Rail => 10,
+            Rail => 10,        // heavy mainline rail
+            RailMinor => 12,   // light rail / narrow gauge
             Tertiary | Unclassified | Residential | Raceway => 14,
             LivingStreet | Service | Footway | Unknown => 16,
         }
@@ -71,6 +77,7 @@ impl RoadKind {
             MajorRoad => 4,
             Motorway | Trunk | Primary => 10,
             Rail => 10,
+            RailMinor => 12,
             Secondary => 12,
             Tertiary | Unclassified | Residential | Raceway => 14,
             LivingStreet | Service | Footway | Unknown => 16,

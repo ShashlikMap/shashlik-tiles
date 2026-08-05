@@ -304,12 +304,12 @@ impl BlockShapeClassifier {
                 if let Some(light_rail) = &self.light_rail
                     && &tag.value == light_rail
                 {
-                    return ShapeClassification::Road(RoadKind::Rail);
+                    return ShapeClassification::Road(RoadKind::RailMinor);
                 }
                 if let Some(narrow_gauge) = &self.narrow_gauge
                     && &tag.value == narrow_gauge
                 {
-                    return ShapeClassification::Road(RoadKind::Rail);
+                    return ShapeClassification::Road(RoadKind::RailMinor);
                 }
             }
 
