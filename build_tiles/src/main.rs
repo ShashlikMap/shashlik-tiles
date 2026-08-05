@@ -167,7 +167,7 @@ fn progress_bar() -> (ProgressBar, Arc<impl Fn(u64, u64) + Send + Sync>) {
 
 fn main() {
     let args = Args::parse();
-    let params = tiler::TileParams::new(14, 4, 6, 8192, 0, 4.0);
+    let params = tiler::TileParams::new(14, 4, 6, 8192, 4.0);
 
     let mut osm_reader = OsmReader::from_file(&args.osm_file);
 

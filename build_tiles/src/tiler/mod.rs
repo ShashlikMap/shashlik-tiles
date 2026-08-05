@@ -68,8 +68,6 @@ pub struct TileParams {
     pub bucket_zoom: u8,
     /// Tile-local coordinate range; one tile spans `[0, extent]`.
     pub extent: i32,
-    /// Clip buffer beyond the tile edge, in tile-local units.
-    pub margin: i32,
     /// Simplification tolerance for pyramid levels, in *rendered pixels*
     /// (converted to tile-local units via `TILE_RENDER_PX`). Only affects
     /// merged/coarse zooms — the base grid zoom is emitted at full detail.
@@ -81,10 +79,10 @@ pub struct TileParams {
 pub const TILE_RENDER_PX: f64 = 512.0;
 
 /// Default configuration: z14 grid (z19 via client overzoom), z3 pyramid floor,
-/// z6 buckets, 8192 extent (~0.3 m at z14), edge-exact clipping (0 margin,
-/// so clipped pieces from adjacent tiles align exactly and can be stitched with
-/// no overlap/artifacts), 2 px simplification on coarse zooms.
-pub const DEFAULT: TileParams = TileParams::new(14, 3, 6, 8192, 0, 2.0);
+/// z6 buckets, 8192 extent (~0.3 m at z14), **edge-exact clipping** — clipped
+/// pieces from adjacent tiles align exactly on the shared boundary and stitch
+/// with no overlap/artifacts — 2 px simplification on coarse zooms.
+pub const DEFAULT: TileParams = TileParams::new(14, 3, 6, 8192, 2.0);
 
 impl TileParams {
     pub const fn new(
@@ -92,7 +90,6 @@ impl TileParams {
         min_zoom: u8,
         bucket_zoom: u8,
         extent: i32,
-        margin: i32,
         simplify_px: f64,
     ) -> Self {
         Self {
@@ -100,7 +97,6 @@ impl TileParams {
             min_zoom,
             bucket_zoom,
             extent,
-            margin,
             simplify_px,
         }
     }
@@ -159,8 +155,8 @@ impl TileParams {
         Mercator::new(point.x, point.y).to_fractional_tile(self.grid_zoom)
     }
 
-    /// Quantize a clipped tile-local `f64` point to `i16`, clamped to the
-    /// buffered extent `[-margin, extent+margin]`.
+    /// Quantize a clipped tile-local `f64` point to `i16`, clamped to the tile
+    /// extent `[0, extent]` (edge-exact — no buffer).
     #[inline]
     pub fn quantize(&self, p: [f64; 2]) -> [i16; 2] {
         [
@@ -171,12 +167,12 @@ impl TileParams {
 
     #[inline]
     fn clamp_local(&self, v: f64) -> i16 {
-        (v as i32).clamp(-self.margin, self.extent + self.margin) as i16
+        (v as i32).clamp(0, self.extent) as i16
     }
 
-    /// The clip rectangle for a tile: the extent plus the buffer margin.
+    /// The clip rectangle for a tile: exactly `[0, extent]` on both axes.
     pub fn clip_rect(&self) -> clip::Rect {
-        clip::Rect::new(-self.margin as f64, (self.extent + self.margin) as f64)
+        clip::Rect::new(0.0, self.extent as f64)
     }
 
     /// Candidate tile `(x, y)` range (inclusive) covering a fractional-tile

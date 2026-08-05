@@ -60,15 +60,15 @@ fn clip_area_range(
     emit: &mut dyn FnMut(u32, u32, AreaPiece),
 ) {
     let extent = zp.extent as f64;
-    let mf = zp.margin as f64 / extent; // margin in fractional-tile units
 
     if tx0 == tx1 && ty0 == ty1 {
-        // Buffered tile rect in fractional coords, and the local-frame transform.
+        // Exact tile rect in fractional coords (edge-exact, no buffer), and the
+        // local-frame transform.
         let (rx0, ry0, rx1, ry1) = (
-            tx0 as f64 - mf,
-            ty0 as f64 - mf,
-            (tx0 + 1) as f64 + mf,
-            (ty0 + 1) as f64 + mf,
+            tx0 as f64,
+            ty0 as f64,
+            (tx0 + 1) as f64,
+            (ty0 + 1) as f64,
         );
         let (ox, oy) = (tx0 as f64, ty0 as f64);
         let to_local = |ring: &[[f64; 2]]| -> Vec<[i16; 2]> {
@@ -103,8 +103,8 @@ fn clip_area_range(
             Vec::new(),
         );
 
-        let lo = (-zp.margin) as i16;
-        let hi = (zp.extent + zp.margin) as i16;
+        let lo = 0i16;
+        let hi = zp.extent as i16;
         for p in subject.intersection(&rect).0 {
             let ext: Vec<[f64; 2]> = p.exterior().0.iter().map(|c| [c.x, c.y]).collect();
             let e = to_local(&ext);
@@ -146,10 +146,10 @@ fn clip_area_range(
         }
         // Multi-tile half: SH-reduce to shrink the geometry before recursing.
         let (rx0, ry0, rx1, ry1) = (
-            ax0 as f64 - mf,
-            ay0 as f64 - mf,
-            (ax1 + 1) as f64 + mf,
-            (ay1 + 1) as f64 + mf,
+            ax0 as f64,
+            ay0 as f64,
+            (ax1 + 1) as f64,
+            (ay1 + 1) as f64,
         );
         let so = sh_rect(outer, rx0, ry0, rx1, ry1);
         if so.len() < 3 {
@@ -181,7 +181,7 @@ pub fn clip_line(points: &[[f64; 2]], zp: &TileParams, emit: &mut dyn FnMut(u32,
     }
     let (tx0, ty0, tx1, ty1) = zp.tiles_covering(x0, y0, x1, y1);
     let extent = zp.extent as f64;
-    let rect = zp.clip_rect(); // local frame: [-margin, extent + margin]^2
+    let rect = zp.clip_rect(); // local frame: [0, extent]^2
 
     for ty in ty0..=ty1 {
         for tx in tx0..=tx1 {
@@ -307,7 +307,7 @@ mod tests {
 
     // z2 grid (4×4 tiles), extent 4096, no margin.
     fn params() -> TileParams {
-        TileParams::new(2, 0, 0, 4096, 0, 2.0)
+        TileParams::new(2, 0, 0, 4096, 2.0)
     }
 
     #[test]

@@ -60,7 +60,6 @@ impl TileSink {
             self.base.min_zoom,
             0,
             self.base.extent,
-            self.base.margin,
             self.base.simplify_px,
         )
     }
