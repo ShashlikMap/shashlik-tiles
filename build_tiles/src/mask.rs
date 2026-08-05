@@ -9,13 +9,16 @@ use std::sync::atomic::{AtomicU8, Ordering::Relaxed};
 use tiles::{MERCATOR_EXTENT, MERCATOR_MAX};
 
 /// Tile zoom whose grid sets the mask resolution: one pixel = one tile at this
-/// zoom (`2^MASK_ZOOM` pixels per axis). z13 ≈ 4.9 km/px.
-const MASK_ZOOM: u8 = 13;
+/// zoom (`2^MASK_ZOOM` pixels per axis). z14 ≈ 2.4 km/px. (Global mask memory is
+/// `(2^MASK_ZOOM)^2` bytes ≈ 256 MiB at z14 — each +1 quadruples it.)
+const MASK_ZOOM: u8 = 14;
 /// Morphological closing radius, in pixels; bridges gaps up to `2 * radius`.
 /// `0` disables closing (aggregation comes only from the resolution coarsening).
 const CLOSE_RADIUS: usize = 0;
-/// Cull merged blobs smaller than this, measured in raster pixels^2
-const MIN_BLOB_PIXELS: f64 = 3.0;
+/// Cull merged blobs smaller than this, measured in raster pixels^2. Scales with
+/// resolution (`~4^MASK_ZOOM`) to keep the *ground-area* cutoff constant — at
+/// z14 one pixel is ~2.4 km, so 12 px² ≈ 70 km².
+const MIN_BLOB_PIXELS: f64 = 12.0;
 /// Pixels per axis.
 const W: usize = 1 << MASK_ZOOM;
 
