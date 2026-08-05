@@ -25,6 +25,34 @@ pub struct Args {
 /// within a tile band).
 const STROKE_PX: f64 = 2.0;
 
+/// MSAA sample count for edge antialiasing. 4× is universally supported and a
+/// good quality/cost tradeoff for 2D line/polygon edges.
+const SAMPLE_COUNT: u32 = 4;
+
+/// Create the multisampled color target the scene renders into; it's resolved
+/// into the (single-sample) surface each frame. Recreated on resize.
+fn create_msaa_view(
+    device: &wgpu::Device,
+    config: &wgpu::SurfaceConfiguration,
+) -> wgpu::TextureView {
+    device
+        .create_texture(&wgpu::TextureDescriptor {
+            label: Some("MSAA framebuffer"),
+            size: wgpu::Extent3d {
+                width: config.width.max(1),
+                height: config.height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: SAMPLE_COUNT,
+            dimension: wgpu::TextureDimension::D2,
+            format: config.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        })
+        .create_view(&wgpu::TextureViewDescriptor::default())
+}
+
 /// Camera transform uploaded to the shader: `clip = mat2(m0, m1) * pos + t`,
 /// where `pos` is a scene-relative vertex. `_pad` keeps the 16-byte alignment a
 /// uniform buffer wants.
@@ -67,6 +95,8 @@ pub struct State {
     config: wgpu::SurfaceConfiguration,
     is_surface_configured: bool,
     render_pipeline: wgpu::RenderPipeline,
+    /// Multisampled color target, resolved into the surface each frame.
+    msaa_view: wgpu::TextureView,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     num_indices: u32,
@@ -215,7 +245,7 @@ impl State {
             },
             depth_stencil: None,
             multisample: wgpu::MultisampleState {
-                count: 1,
+                count: SAMPLE_COUNT,
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
@@ -271,6 +301,8 @@ impl State {
             }],
         });
 
+        let msaa_view = create_msaa_view(&device, &config);
+
         Ok(Self {
             surface,
             device,
@@ -278,6 +310,7 @@ impl State {
             config,
             is_surface_configured: false,
             render_pipeline,
+            msaa_view,
             vertex_buffer,
             index_buffer,
             num_indices,
@@ -363,6 +396,8 @@ impl State {
             self.config.width = width;
             self.config.height = height;
             self.surface.configure(&self.device, &self.config);
+            // MSAA target must track the surface size.
+            self.msaa_view = create_msaa_view(&self.device, &self.config);
             self.is_surface_configured = true;
             // Keep the camera viewport in sync so the transform + visible-tile
             // computation match the framebuffer.
@@ -421,8 +456,10 @@ impl State {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
+                    // Render into the multisampled target, resolve into the
+                    // surface. The MSAA buffer itself needn't be kept.
+                    view: &self.msaa_view,
+                    resolve_target: Some(&view),
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
                             r: 0.965,
@@ -430,7 +467,7 @@ impl State {
                             b: 0.965,
                             a: 1.0,
                         }),
-                        store: wgpu::StoreOp::Store,
+                        store: wgpu::StoreOp::Discard,
                     },
                     depth_slice: None,
                 })],
