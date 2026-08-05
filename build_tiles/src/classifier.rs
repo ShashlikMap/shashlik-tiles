@@ -1,6 +1,6 @@
 //! Classification of geometries as map elements
 
-use crate::shapes::{AreaKind, LabelClass, Lanes, RoadKind};
+use crate::shapes::{AreaKind, LabelClass, Lanes, PoiKind, RoadKind};
 use hashbrown::HashMap;
 use osm_pbf::tags::Tag;
 
@@ -52,6 +52,7 @@ sid_constructor!(
         rail: Option<u32>,
         light_rail: Option<u32>,
         narrow_gauge: Option<u32>,
+        traffic_signals: Option<u32>,
         natural: Option<u32>,
         water: Option<u32>,
         building: Option<u32>,
@@ -112,6 +113,21 @@ impl BlockShapeClassifier {
 
     /// Classify a node's `place=*` tag into a `LabelClass`, or `None` if it is
     /// not a recognised populated place.
+    /// Classify a node's tags into a point-of-interest kind, or `None`.
+    /// Currently: `highway=traffic_signals` → [`PoiKind::TrafficSignal`].
+    pub fn classify_poi(&self, tags: &[Tag]) -> Option<PoiKind> {
+        for tag in tags {
+            if let Some(highway) = &self.highway
+                && &tag.key == highway
+                && let Some(ts) = &self.traffic_signals
+                && &tag.value == ts
+            {
+                return Some(PoiKind::TrafficSignal);
+            }
+        }
+        None
+    }
+
     pub fn classify_place(&self, tags: &[Tag]) -> Option<LabelClass> {
         let place_key = self.place?;
         for tag in tags {

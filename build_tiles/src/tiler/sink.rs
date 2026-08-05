@@ -10,7 +10,7 @@
 use super::record::{TileGeometry, TileRecord};
 use super::spill::SpillWriter;
 use super::{TILE_RENDER_PX, TileParams, grid};
-use crate::shapes::{Area, AreaKind, EdgeNode, Label, Road, Shape};
+use crate::shapes::{Area, AreaKind, EdgeNode, Label, Poi, Road, Shape};
 use crate::sink::ShapeSink;
 use geo::{Coord, MapCoords, SimplifyVw};
 use std::io;
@@ -225,6 +225,24 @@ impl TileSink {
             });
         });
     }
+
+    fn push_poi(&self, poi: &Poi, z: u8) {
+        if z < poi.kind.min_zoom() {
+            return;
+        }
+        let zp = self.zoom_params(z);
+        let (fx, fy) = zp.fractional(poi.anchor);
+        grid::clip_point([fx, fy], &zp, &mut |tx, ty, anchor| {
+            self.spill.append(TileRecord {
+                tile_key: zp.tile_id(tx, ty, z),
+                layer: 0,
+                geometry: TileGeometry::Poi {
+                    kind: poi.kind,
+                    anchor,
+                },
+            });
+        });
+    }
 }
 
 impl ShapeSink for TileSink {
@@ -234,6 +252,7 @@ impl ShapeSink for TileSink {
                 Shape::Area(area) => self.push_area(area, z),
                 Shape::Road(road) => self.push_road(road, z),
                 Shape::Label(label) => self.push_label(label, z),
+                Shape::Poi(poi) => self.push_poi(poi, z),
             }
         }
     }

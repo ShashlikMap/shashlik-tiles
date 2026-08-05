@@ -2,7 +2,7 @@ use crate::vertex::Vertex2dBuffer;
 use lyon_tessellation::{
     FillOptions, FillRule, FillTessellator, StrokeOptions, StrokeTessellator, geom::Point,
 };
-use tiles::decode::{AreaKind, DecodedTile, RoadKind, Scene, SceneView};
+use tiles::decode::{AreaKind, DecodedTile, PoiKind, RoadKind, Scene, SceneView};
 use tiles::reader::{FileRangeReader, HttpRangeReader, PmTilesReader, RangeReader};
 use tiles::view::TileCache;
 
@@ -66,6 +66,7 @@ pub fn tessellate(scene: &Scene, origin: [f64; 2], line_width: f32) -> Vertex2dB
         }
     }
 
+    // wireframe drawing for testing welding
     // for a in scene.areas() {
     //     let opts = StrokeOptions::default().with_line_width(line_width);
     //     let mut b = stess.builder(&opts, &mut buffer);
@@ -82,7 +83,30 @@ pub fn tessellate(scene: &Scene, origin: [f64; 2], line_width: f32) -> Vertex2dB
     //     }
     //     b.build().unwrap();
     // }
+
+    // POI placeholder marker
+    let half = (line_width * 2.0).max(1.0);
+    for p in scene.pois() {
+        buffer.current_color = poi_color(p.kind);
+        let c = rel(p.anchor);
+        let opts = FillOptions::default();
+        let mut b = ftess.builder(&opts, &mut buffer);
+        b.begin(Point::new(c.x - half, c.y - half));
+        b.line_to(Point::new(c.x + half, c.y - half));
+        b.line_to(Point::new(c.x + half, c.y + half));
+        b.line_to(Point::new(c.x - half, c.y + half));
+        b.end(true);
+        b.build().unwrap();
+    }
+
     buffer
+}
+
+/// Palette index for a POI kind. Must match the palette in `shader.wgsl`.
+fn poi_color(kind: PoiKind) -> u32 {
+    match kind {
+        PoiKind::TrafficSignal => 11,
+    }
 }
 
 /// Palette index for an area kind. Must match the `PALETTE` table in `shader.wgsl`.

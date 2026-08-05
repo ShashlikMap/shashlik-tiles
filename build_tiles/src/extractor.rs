@@ -2,7 +2,7 @@
 
 use crate::classifier::{BlockShapeClassifier, ShapeClassification};
 use crate::node_cache::{NodeStore, PackedCoord};
-use crate::shapes::{Area, AreaKind, EdgeNode, Label, LabelClass, Lanes, Road, RoadKind};
+use crate::shapes::{Area, AreaKind, EdgeNode, Label, LabelClass, Lanes, Poi, Road, RoadKind};
 use crate::sink::ShapeSink;
 use cache::bitset::BitSet;
 use cache::index::OsmPbfIndex;
@@ -480,11 +480,18 @@ pub fn extract_place_labels(
         let lon_offset = block.lon_offset();
 
         let emit = |node: DecodedNode| {
+            // Place-name label (needs a name).
             if let Some(class) = classifier.classify_place(&node.tags)
                 && let Some(name) = classifier.name_of(&node.tags, strings)
             {
                 let anchor = project(PackedCoord::from_lonlat(node.lon, node.lat));
                 sink.push(Label::new(anchor, class, name).into());
+            }
+            // Point-of-interest symbol (no name) — same node pass, so no extra
+            // scan over the (large) node section.
+            if let Some(kind) = classifier.classify_poi(&node.tags) {
+                let anchor = project(PackedCoord::from_lonlat(node.lon, node.lat));
+                sink.push(Poi::new(anchor, kind).into());
             }
         };
 

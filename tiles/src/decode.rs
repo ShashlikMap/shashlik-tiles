@@ -5,9 +5,10 @@ use geo::{Coord, LineString, Polygon};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::io;
-pub use util::feature::{AreaKind, EdgeNode, LabelClass, Lanes, RoadKind};
+pub use util::feature::{AreaKind, EdgeNode, LabelClass, Lanes, PoiKind, RoadKind};
 use util::tileformat::{
-    AreaMeta, FLAG_RING_CLIP_MASK, LabelMeta, NAME_NONE, RingMeta, RoadMeta, TileHeader, dezigzag,
+    AreaMeta, FLAG_RING_CLIP_MASK, LabelMeta, NAME_NONE, PoiMeta, RingMeta, RoadMeta, TileHeader,
+    dezigzag,
 };
 
 // ─────────────────────────── decoded tile (cache payload) ───────────────────
@@ -19,6 +20,7 @@ pub struct DecodedTile {
     pub roads: Vec<DecRoad>,
     pub areas: Vec<DecArea>,
     pub labels: Vec<DecLabel>,
+    pub pois: Vec<DecPoi>,
 }
 
 #[derive(Clone)]
@@ -52,6 +54,12 @@ pub struct DecLabel {
     pub name: String,
 }
 
+#[derive(Clone)]
+pub struct DecPoi {
+    pub kind: PoiKind,
+    pub anchor: [i16; 2],
+}
+
 /// Decode a compressed tile blob (as stored in the archive) into geometry.
 pub fn decode_tile(compressed: &[u8]) -> io::Result<DecodedTile> {
     let raw = zstd::decode_all(compressed)?;
@@ -66,6 +74,7 @@ fn decode_uncompressed(raw: &[u8]) -> Option<DecodedTile> {
     let area_metas: Vec<AreaMeta> = read_vec(raw, &mut off, h.area_count as usize)?;
     let ring_metas: Vec<RingMeta> = read_vec(raw, &mut off, h.ring_count as usize)?;
     let label_metas: Vec<LabelMeta> = read_vec(raw, &mut off, h.label_count as usize)?;
+    let poi_metas: Vec<PoiMeta> = read_vec(raw, &mut off, h.poi_count as usize)?;
 
     // Coordinate pool: road chains first, then ring chains (each zig-zag delta).
     let mut road_coords = Vec::with_capacity(road_metas.len());
@@ -139,11 +148,22 @@ fn decode_uncompressed(raw: &[u8]) -> Option<DecodedTile> {
         });
     }
 
+    let pois = poi_metas
+        .iter()
+        .map(|m| {
+            Some(DecPoi {
+                kind: PoiKind::from_u8(m.kind)?,
+                anchor: [m.anchor_x, m.anchor_y],
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+
     Some(DecodedTile {
         extent: h.extent,
         roads,
         areas,
         labels,
+        pois,
     })
 }
 
@@ -164,7 +184,8 @@ impl TilePayload for DecodedTile {
             .map(|a| a.rings.iter().map(|r| r.len() * 4).sum::<usize>() + a.clip.len() / 8 + 16)
             .sum();
         let labels: usize = self.labels.iter().map(|l| l.name.len() + 16).sum();
-        roads + areas + labels + 64
+        let pois = self.pois.len() * 8;
+        roads + areas + labels + pois + 64
     }
 }
 
@@ -180,6 +201,7 @@ pub struct Scene {
     roads: Vec<SceneRoad>,
     areas: Vec<SceneArea>,
     labels: Vec<SceneLabel>,
+    pois: Vec<ScenePoi>,
 }
 
 pub struct SceneRoad {
@@ -205,6 +227,12 @@ pub struct SceneLabel {
     pub rank: u8,
     pub anchor: [i32; 2],
     pub name: String,
+}
+
+pub struct ScenePoi {
+    pub kind: PoiKind,
+    /// Absolute scene-frame anchor (tile index × extent at `target_zoom`).
+    pub anchor: [i32; 2],
 }
 
 impl SceneArea {
@@ -253,6 +281,7 @@ pub enum Feature<'a> {
     Road(&'a SceneRoad),
     Area(&'a SceneArea),
     Label(&'a SceneLabel),
+    Poi(&'a ScenePoi),
 }
 
 impl Scene {
@@ -294,6 +323,7 @@ impl Scene {
         let mut roads: Vec<SceneRoad> = Vec::new(); // fallback roads (kept as-is)
         let mut areas: Vec<SceneArea> = Vec::new();
         let mut labels: Vec<SceneLabel> = Vec::new();
+        let mut pois: Vec<ScenePoi> = Vec::new();
 
         for v in &visible {
             let d = &v.data;
@@ -357,6 +387,15 @@ impl Scene {
                     name: l.name.clone(),
                 });
             }
+            for p in &d.pois {
+                if p.kind.display_min_zoom() > display_zoom {
+                    continue; // class not shown at this zoom
+                }
+                pois.push(ScenePoi {
+                    kind: p.kind,
+                    anchor: to_scene(p.anchor),
+                });
+            }
         }
 
         roads.extend(weld_scene_roads(weldable));
@@ -373,6 +412,7 @@ impl Scene {
             roads,
             areas,
             labels,
+            pois,
         }
     }
 
@@ -385,14 +425,18 @@ impl Scene {
     pub fn labels(&self) -> &[SceneLabel] {
         &self.labels
     }
+    pub fn pois(&self) -> &[ScenePoi] {
+        &self.pois
+    }
 
-    /// Iterate every geometry in the view (roads, then areas, then labels).
+    /// Iterate every geometry in the view (roads, then areas, then labels, then POIs).
     pub fn features(&self) -> impl Iterator<Item = Feature<'_>> {
         self.roads
             .iter()
             .map(Feature::Road)
             .chain(self.areas.iter().map(Feature::Area))
             .chain(self.labels.iter().map(Feature::Label))
+            .chain(self.pois.iter().map(Feature::Poi))
     }
 }
 

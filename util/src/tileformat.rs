@@ -4,7 +4,7 @@
 use bytemuck::{Pod, Zeroable};
 
 /// Current tile format version (`TileHeader::version`).
-pub const TILE_VERSION: u8 = 1;
+pub const TILE_VERSION: u8 = 2;
 
 /// `RoadMeta.name` / `LabelMeta.name` sentinel meaning "no name".
 pub const NAME_NONE: u16 = u16::MAX;
@@ -24,6 +24,7 @@ pub struct TileHeader {
     pub area_count: u16,
     pub ring_count: u16,
     pub label_count: u16,
+    pub poi_count: u16,
     pub string_count: u16,
 }
 
@@ -57,6 +58,17 @@ pub struct LabelMeta {
     pub anchor_y: i16,
     /// Index into the string table.
     pub name: u16,
+}
+
+/// A point-of-interest symbol: a kind and an absolute tile-local anchor (no
+/// text, not delta-encoded — POIs are single points).
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct PoiMeta {
+    pub kind: u8,
+    pub _pad: u8,
+    pub anchor_x: i16,
+    pub anchor_y: i16,
 }
 
 #[repr(C)]

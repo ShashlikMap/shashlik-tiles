@@ -15,13 +15,14 @@
 //! Counts are varints (1 byte for the common small fragment, unbounded for giant
 //! rings — no `u16` ceiling).
 
-use crate::shapes::{AreaKind, EdgeNode, LabelClass, RoadKind};
+use crate::shapes::{AreaKind, EdgeNode, LabelClass, PoiKind, RoadKind};
 use util::varint::{read_uvarint, write_uvarint};
 
-/// Tag byte: `AREA_FLAG` → area, else `LABEL_FLAG` → label, else road. The low
-/// bits carry the kind/class ordinal.
+/// Tag byte: both high bits → POI, else `AREA_FLAG` → area, else `LABEL_FLAG` →
+/// label, else road. The low bits carry the kind/class ordinal.
 const AREA_FLAG: u8 = 0x80;
 const LABEL_FLAG: u8 = 0x40;
+const POI_FLAG: u8 = AREA_FLAG | LABEL_FLAG; // 0xC0
 const KIND_MASK: u8 = 0x3f;
 
 /// One clipped shape destined for a single tile.
@@ -61,6 +62,12 @@ pub enum TileGeometry {
         class: LabelClass,
         anchor: [i16; 2],
         name: String,
+    },
+    /// A point-of-interest symbol: a kind and an anchor, no text. Emitted only in
+    /// its home tile.
+    Poi {
+        kind: PoiKind,
+        anchor: [i16; 2],
     },
 }
 
@@ -114,6 +121,12 @@ pub fn encode(buf: &mut Vec<u8>, record: &TileRecord) {
             buf.extend_from_slice(&anchor[1].to_le_bytes());
             write_opt_str(buf, Some(name));
         }
+        TileGeometry::Poi { kind, anchor } => {
+            buf.push(POI_FLAG | *kind as u8);
+            buf.push(record.layer as u8);
+            buf.extend_from_slice(&anchor[0].to_le_bytes());
+            buf.extend_from_slice(&anchor[1].to_le_bytes());
+        }
     }
 }
 
@@ -125,7 +138,13 @@ pub fn decode(cursor: &mut &[u8]) -> Option<TileRecord> {
     let layer = read_u8(cursor)? as i8;
     let kind_ord = tag & KIND_MASK;
 
-    let geometry = if tag & AREA_FLAG != 0 {
+    let geometry = if tag & POI_FLAG == POI_FLAG {
+        // Both high bits set → POI (checked before area/label, which each match
+        // one of the bits).
+        let kind = PoiKind::from_u8(kind_ord)?;
+        let anchor = [read_i16(cursor)?, read_i16(cursor)?];
+        TileGeometry::Poi { kind, anchor }
+    } else if tag & AREA_FLAG != 0 {
         let kind = AreaKind::from_u8(kind_ord)?;
         let floors = read_u8(cursor)?;
         let ring_count = read_uvarint(cursor)? as usize;

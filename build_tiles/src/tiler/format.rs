@@ -2,7 +2,7 @@ use super::record::{TileGeometry, TileRecord};
 use bytemuck::{bytes_of, cast_slice};
 use hashbrown::HashMap;
 use util::tileformat::{
-    AreaMeta, FLAG_RING_CLIP_MASK, LabelMeta, NAME_NONE, RingMeta, RoadMeta, TILE_VERSION,
+    AreaMeta, FLAG_RING_CLIP_MASK, LabelMeta, NAME_NONE, PoiMeta, RingMeta, RoadMeta, TILE_VERSION,
     TileHeader, zigzag,
 };
 
@@ -35,6 +35,7 @@ pub fn build_tile<'a>(records: impl IntoIterator<Item = &'a TileRecord>, extent:
     let mut area_metas: Vec<AreaMeta> = Vec::new();
     let mut ring_metas: Vec<RingMeta> = Vec::new();
     let mut label_metas: Vec<LabelMeta> = Vec::new();
+    let mut poi_metas: Vec<PoiMeta> = Vec::new();
     let mut road_coords: Vec<[u16; 2]> = Vec::new();
     let mut ring_coords: Vec<[u16; 2]> = Vec::new();
     // One flag per ring vertex (rings in emission order): clip-produced?
@@ -118,6 +119,14 @@ pub fn build_tile<'a>(records: impl IntoIterator<Item = &'a TileRecord>, extent:
                     name: intern(name, &mut string_list, &mut interned),
                 });
             }
+            TileGeometry::Poi { kind, anchor } => {
+                poi_metas.push(PoiMeta {
+                    kind: *kind as u8,
+                    _pad: 0,
+                    anchor_x: anchor[0],
+                    anchor_y: anchor[1],
+                });
+            }
         }
     }
 
@@ -130,6 +139,7 @@ pub fn build_tile<'a>(records: impl IntoIterator<Item = &'a TileRecord>, extent:
         area_count: area_metas.len() as u16,
         ring_count: ring_metas.len() as u16,
         label_count: label_metas.len() as u16,
+        poi_count: poi_metas.len() as u16,
         string_count: string_list.len() as u16,
     };
 
@@ -139,6 +149,7 @@ pub fn build_tile<'a>(records: impl IntoIterator<Item = &'a TileRecord>, extent:
     out.extend_from_slice(cast_slice(&area_metas));
     out.extend_from_slice(cast_slice(&ring_metas));
     out.extend_from_slice(cast_slice(&label_metas));
+    out.extend_from_slice(cast_slice(&poi_metas));
     out.extend_from_slice(cast_slice(&road_coords));
     out.extend_from_slice(cast_slice(&ring_coords));
     for s in &string_list {

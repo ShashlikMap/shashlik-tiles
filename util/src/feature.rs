@@ -228,6 +228,39 @@ impl LabelClass {
     }
 }
 
+/// Point-of-interest classification — symbol features drawn at a single anchor
+/// (no text). `self as u8` is the wire ordinal; [`from_u8`](PoiKind::from_u8) is
+/// its inverse.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PoiKind {
+    TrafficSignal,
+}
+
+impl PoiKind {
+    pub fn from_u8(v: u8) -> Option<Self> {
+        Some(match v {
+            0 => PoiKind::TrafficSignal,
+            _ => return None,
+        })
+    }
+
+    /// Build threshold: coarsest zoom this POI is materialized into. Point POIs
+    /// like signals are dense, so only the base grid zoom.
+    pub fn min_zoom(self) -> u8 {
+        match self {
+            PoiKind::TrafficSignal => 14,
+        }
+    }
+
+    /// Display threshold: coarsest camera zoom at which this POI is shown.
+    pub fn display_min_zoom(self) -> u8 {
+        match self {
+            PoiKind::TrafficSignal => 15,
+        }
+    }
+}
+
 /// Lane counts on each side of a road's centerline, relative to the geometry's
 /// direction (node order). A one-way road has `backward == 0` (or `forward == 0`
 /// for a reversed one-way).

@@ -15,9 +15,9 @@ struct VertexOutput {
     @location(0) color: vec3<f32>,
 };
 
-const PALETTE_LEN: u32 = 11u;
+const PALETTE_LEN: u32 = 12u;
 fn palette(i: u32) -> vec3<f32> {
-    var colors = array<vec3<f32>, 11>(
+    var colors = array<vec3<f32>, 12>(
         vec3<f32>(0.130, 0.623, 0.930), // 0 water
         vec3<f32>(0.196, 0.549, 0.251), // 1 forest
         vec3<f32>(0.823, 0.980, 0.831), // 2 grass
@@ -29,6 +29,7 @@ fn palette(i: u32) -> vec3<f32> {
         vec3<f32>(0.902, 0.451, 0.129), // 8 road: merged major network
         vec3<f32>(0.400, 0.400, 0.420), // 9 railway (heavy)
         vec3<f32>(0.560, 0.560, 0.580), // 10 railway (minor: light/narrow)
+        vec3<f32>(0.900, 0.300, 0.240), // 11 POI: traffic signal
     );
     return colors[min(i, PALETTE_LEN - 1u)];
 }

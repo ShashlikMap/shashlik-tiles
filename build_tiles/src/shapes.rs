@@ -7,7 +7,7 @@
 
 use geo::{Coord, LineString, Polygon};
 
-pub use util::feature::{AreaKind, EdgeNode, LabelClass, Lanes, RoadKind};
+pub use util::feature::{AreaKind, EdgeNode, LabelClass, Lanes, PoiKind, RoadKind};
 
 /// A text label anchored at a single point in Web Mercator meters. Point labels
 /// are never clipped — a label is emitted only in the tile containing its
@@ -102,12 +102,27 @@ impl Area {
     }
 }
 
+/// A point of interest: a symbol drawn at a single anchor (Web Mercator meters),
+/// with no text. Never clipped — emitted only in the tile containing its anchor.
+#[derive(Debug, Clone)]
+pub struct Poi {
+    pub anchor: Coord,
+    pub kind: PoiKind,
+}
+
+impl Poi {
+    pub fn new(anchor: Coord, kind: PoiKind) -> Self {
+        Self { anchor, kind }
+    }
+}
+
 /// A geometry ready to stream to the tiler.
 #[derive(Debug, Clone)]
 pub enum Shape {
     Road(Road),
     Area(Area),
     Label(Label),
+    Poi(Poi),
 }
 
 impl Shape {
@@ -118,6 +133,7 @@ impl Shape {
             Shape::Road(road) => road.layer,
             Shape::Area(area) => area.layer,
             Shape::Label(_) => 0,
+            Shape::Poi(_) => 0,
         }
     }
 }
@@ -137,5 +153,11 @@ impl From<Area> for Shape {
 impl From<Label> for Shape {
     fn from(label: Label) -> Self {
         Shape::Label(label)
+    }
+}
+
+impl From<Poi> for Shape {
+    fn from(poi: Poi) -> Self {
+        Shape::Poi(poi)
     }
 }
