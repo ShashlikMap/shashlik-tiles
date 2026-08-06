@@ -7,7 +7,7 @@
 
 use geo::{Coord, LineString, Polygon};
 
-pub use util::feature::{AreaKind, EdgeNode, LabelClass, Lanes, PoiKind, RoadKind};
+pub use util::feature::{AreaKind, EdgeNode, LabelClass, Lanes, PoiKind, RoadKind, RoadStructure};
 
 /// A text label anchored at a single point in Web Mercator meters. Point labels
 /// are never clipped — a label is emitted only in the tile containing its
@@ -43,6 +43,8 @@ pub struct Road {
     pub layer: i8,
     pub lanes: Lanes,
     pub name: Option<String>,
+    /// Bridge/tunnel grade separation (default [`RoadStructure::None`]).
+    pub structure: RoadStructure,
 }
 
 impl Road {
@@ -63,7 +65,14 @@ impl Road {
             layer,
             lanes,
             name,
+            structure: RoadStructure::None,
         }
+    }
+
+    /// Set the grade-separation structure (bridge/tunnel).
+    pub fn with_structure(mut self, structure: RoadStructure) -> Self {
+        self.structure = structure;
+        self
     }
 }
 

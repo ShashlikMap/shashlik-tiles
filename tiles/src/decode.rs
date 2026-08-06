@@ -5,7 +5,7 @@ use geo::{Coord, LineString, Polygon};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::io;
-pub use util::feature::{AreaKind, EdgeNode, LabelClass, Lanes, PoiKind, RoadKind};
+pub use util::feature::{AreaKind, EdgeNode, LabelClass, Lanes, PoiKind, RoadKind, RoadStructure};
 use util::tileformat::{
     AreaMeta, FLAG_RING_CLIP_MASK, LabelMeta, NAME_NONE, PoiMeta, RingMeta, RoadMeta, TileHeader,
     dezigzag,
@@ -30,6 +30,7 @@ pub struct DecRoad {
     pub lanes: Lanes,
     pub start: EdgeNode,
     pub end: EdgeNode,
+    pub structure: RoadStructure,
     pub name: Option<String>,
     pub coords: Vec<[i16; 2]>,
 }
@@ -113,6 +114,7 @@ fn decode_uncompressed(raw: &[u8]) -> Option<DecodedTile> {
             lanes: Lanes::new(m.lanes_forward, m.lanes_backward),
             start: EdgeNode::from_u8(m.caps & 0b11)?,
             end: EdgeNode::from_u8((m.caps >> 2) & 0b11)?,
+            structure: RoadStructure::from_u8((m.caps >> 4) & 0b11)?,
             name: name_of(m.name),
             coords,
         });
@@ -210,6 +212,7 @@ pub struct SceneRoad {
     pub lanes: Lanes,
     pub start: EdgeNode,
     pub end: EdgeNode,
+    pub structure: RoadStructure,
     pub name: Option<String>,
     pub coords: Vec<[i32; 2]>,
 }
@@ -350,6 +353,7 @@ impl Scene {
                     lanes: r.lanes,
                     start: r.start,
                     end: r.end,
+                    structure: r.structure,
                     name: r.name.clone(),
                     coords: r.coords.iter().map(|&c| to_scene(c)).collect(),
                 };
@@ -574,6 +578,7 @@ fn weld_group(roads: &[SceneRoad], idxs: &[usize], out: &mut Vec<SceneRoad>) {
             lanes: r.lanes,
             start,
             end,
+            structure: r.structure,
             name: r.name.clone(),
             coords,
         });
@@ -723,6 +728,7 @@ mod tests {
             lanes: Lanes::new(1, 1),
             start,
             end,
+            structure: RoadStructure::None,
             name: None,
             coords,
         }

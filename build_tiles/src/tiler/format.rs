@@ -56,6 +56,7 @@ pub fn build_tile<'a>(records: impl IntoIterator<Item = &'a TileRecord>, extent:
                 lanes_forward,
                 lanes_backward,
                 name,
+                structure,
             } => {
                 debug_assert!(
                     coords.len() <= u16::MAX as usize,
@@ -63,7 +64,8 @@ pub fn build_tile<'a>(records: impl IntoIterator<Item = &'a TileRecord>, extent:
                 );
                 road_metas.push(RoadMeta {
                     kind: *kind as u8,
-                    caps: (*start as u8) | ((*end as u8) << 2),
+                    // caps byte: start (0..1), end (2..3), structure (4..5).
+                    caps: (*start as u8) | ((*end as u8) << 2) | ((*structure as u8) << 4),
                     layer: record.layer,
                     lanes_forward: *lanes_forward,
                     lanes_backward: *lanes_backward,

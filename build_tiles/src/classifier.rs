@@ -1,6 +1,6 @@
 //! Classification of geometries as map elements
 
-use crate::shapes::{AreaKind, LabelClass, Lanes, PoiKind, RoadKind};
+use crate::shapes::{AreaKind, LabelClass, Lanes, PoiKind, RoadKind, RoadStructure};
 use hashbrown::HashMap;
 use osm_pbf::tags::Tag;
 
@@ -53,6 +53,9 @@ sid_constructor!(
         light_rail: Option<u32>,
         narrow_gauge: Option<u32>,
         traffic_signals: Option<u32>,
+        bridge: Option<u32>,
+        tunnel: Option<u32>,
+        no: Option<u32>,
         natural: Option<u32>,
         water: Option<u32>,
         building: Option<u32>,
@@ -76,6 +79,28 @@ sid_constructor!(
 );
 
 impl BlockShapeClassifier {
+    /// Grade-separation structure from `bridge=*` / `tunnel=*` (any value except
+    /// `no`). Bridge wins if both are set (rare/degenerate).
+    pub fn structure_of(&self, tags: &[Tag]) -> RoadStructure {
+        let mut result = RoadStructure::None;
+        for tag in tags {
+            let not_no = self.no != Some(tag.value);
+            if let Some(bridge) = &self.bridge
+                && &tag.key == bridge
+                && not_no
+            {
+                return RoadStructure::Bridge;
+            }
+            if let Some(tunnel) = &self.tunnel
+                && &tag.key == tunnel
+                && not_no
+            {
+                result = RoadStructure::Tunnel;
+            }
+        }
+        result
+    }
+
     /// The OSM `layer` tag as a signed stacking level (bridges/tunnels/overpasses),
     /// `0` if absent or unparseable. `strings` is the block string table
     /// (`id -> bytes`), needed to read the tag's numeric value.

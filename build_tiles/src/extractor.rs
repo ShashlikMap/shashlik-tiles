@@ -2,7 +2,9 @@
 
 use crate::classifier::{BlockShapeClassifier, ShapeClassification};
 use crate::node_cache::{NodeStore, PackedCoord};
-use crate::shapes::{Area, AreaKind, EdgeNode, Label, LabelClass, Lanes, Poi, Road, RoadKind};
+use crate::shapes::{
+    Area, AreaKind, EdgeNode, Label, LabelClass, Lanes, Poi, Road, RoadKind, RoadStructure,
+};
 use crate::sink::ShapeSink;
 use cache::bitset::BitSet;
 use cache::index::OsmPbfIndex;
@@ -315,6 +317,7 @@ enum KeptWay {
         lanes: Lanes,
         refs: Vec<i64>,
         name: Option<String>,
+        structure: RoadStructure,
     },
     Area {
         kind: AreaKind,
@@ -381,11 +384,21 @@ pub fn extract_ways(
                 if !way_filter.matches(&way.tags) {
                     continue;
                 }
-                let layer = classifier.layer_of(&way.tags, strings);
+                let mut layer = classifier.layer_of(&way.tags, strings);
                 let name = classifier.name_of(&way.tags, strings);
                 match classifier.classify_way(&way.tags) {
                     ShapeClassification::Road(kind) if way.refs.len() >= 2 => {
                         let lanes = classifier.lanes_of(&way.tags, strings);
+                        let structure = classifier.structure_of(&way.tags);
+                        // Synthesize a stacking level for bridges/tunnels tagged
+                        // without an explicit `layer` (very common in OSM).
+                        if layer == 0 {
+                            layer = match structure {
+                                RoadStructure::Bridge => 1,
+                                RoadStructure::Tunnel => -1,
+                                RoadStructure::None => 0,
+                            };
+                        }
                         refs.extend_from_slice(&way.refs);
                         kept.push(KeptWay::Road {
                             kind,
@@ -393,6 +406,7 @@ pub fn extract_ways(
                             lanes,
                             refs: way.refs,
                             name,
+                            structure,
                         });
                     }
                     ShapeClassification::Area(kind) if is_ring(&way.refs) => {
@@ -439,10 +453,15 @@ pub fn extract_ways(
                     lanes,
                     refs,
                     name,
+                    structure,
                 } => {
                     let start = connectivity.edge(refs[0]);
                     let end = connectivity.edge(refs[refs.len() - 1]);
-                    sink.push(Road::new(kind, line(&refs), start, end, layer, lanes, name).into());
+                    sink.push(
+                        Road::new(kind, line(&refs), start, end, layer, lanes, name)
+                            .with_structure(structure)
+                            .into(),
+                    );
                 }
                 KeptWay::Area {
                     kind,

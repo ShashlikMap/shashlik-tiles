@@ -15,7 +15,7 @@
 //! Counts are varints (1 byte for the common small fragment, unbounded for giant
 //! rings — no `u16` ceiling).
 
-use crate::shapes::{AreaKind, EdgeNode, LabelClass, PoiKind, RoadKind};
+use crate::shapes::{AreaKind, EdgeNode, LabelClass, PoiKind, RoadKind, RoadStructure};
 use util::varint::{read_uvarint, write_uvarint};
 
 /// Tag byte: both high bits → POI, else `AREA_FLAG` → area, else `LABEL_FLAG` →
@@ -45,6 +45,8 @@ pub enum TileGeometry {
         lanes_backward: u8,
         /// Name rendered along the line, if any.
         name: Option<String>,
+        /// Bridge/tunnel grade separation.
+        structure: RoadStructure,
     },
     Area {
         kind: AreaKind,
@@ -84,10 +86,12 @@ pub fn encode(buf: &mut Vec<u8>, record: &TileRecord) {
             lanes_forward,
             lanes_backward,
             name,
+            structure,
         } => {
             buf.push(*kind as u8);
             buf.push(record.layer as u8);
-            buf.push((*start as u8) | ((*end as u8) << 2));
+            // caps byte: start (0..1), end (2..3), structure (4..5).
+            buf.push((*start as u8) | ((*end as u8) << 2) | ((*structure as u8) << 4));
             buf.push(*lanes_forward);
             buf.push(*lanes_backward);
             write_uvarint(buf, coords.len() as u64);
@@ -176,6 +180,7 @@ pub fn decode(cursor: &mut &[u8]) -> Option<TileRecord> {
         let caps = read_u8(cursor)?;
         let start = EdgeNode::from_u8(caps & 0b11)?;
         let end = EdgeNode::from_u8((caps >> 2) & 0b11)?;
+        let structure = RoadStructure::from_u8((caps >> 4) & 0b11)?;
         let lanes_forward = read_u8(cursor)?;
         let lanes_backward = read_u8(cursor)?;
         let coords = read_coords(cursor)?;
@@ -188,6 +193,7 @@ pub fn decode(cursor: &mut &[u8]) -> Option<TileRecord> {
             lanes_forward,
             lanes_backward,
             name,
+            structure,
         }
     };
 
@@ -312,6 +318,7 @@ mod tests {
                 lanes_forward: 3,
                 lanes_backward: 0,
                 name: Some("東名高速道路".to_string()),
+                structure: RoadStructure::Bridge,
             },
         });
     }
@@ -329,6 +336,7 @@ mod tests {
                 lanes_forward: 1,
                 lanes_backward: 1,
                 name: None,
+                structure: RoadStructure::None,
             },
         });
     }
@@ -391,6 +399,7 @@ mod tests {
                 lanes_forward: 2,
                 lanes_backward: 2,
                 name: None,
+                structure: RoadStructure::Tunnel,
             },
         };
         let b = TileRecord {

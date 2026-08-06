@@ -202,6 +202,7 @@ impl TileSink {
                     lanes_forward: road.lanes.forward,
                     lanes_backward: road.lanes.backward,
                     name: road.name.clone(),
+                    structure: road.structure,
                 },
             });
         });

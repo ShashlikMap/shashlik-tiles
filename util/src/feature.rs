@@ -134,6 +134,29 @@ impl AreaKind {
     }
 }
 
+/// Grade-separation structure a linear feature sits on. Drives both draw order
+/// (via the OSM `layer` tag) and special rendering (bridge casing, tunnel style).
+/// `self as u8` is the wire ordinal; [`from_u8`](RoadStructure::from_u8) inverts.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RoadStructure {
+    #[default]
+    None,
+    Bridge,
+    Tunnel,
+}
+
+impl RoadStructure {
+    pub fn from_u8(v: u8) -> Option<Self> {
+        Some(match v {
+            0 => RoadStructure::None,
+            1 => RoadStructure::Bridge,
+            2 => RoadStructure::Tunnel,
+            _ => return None,
+        })
+    }
+}
+
 /// State of a road endpoint. Extraction produces only `Connected` (a junction)
 /// or `Disconnected` (a true dead-end); the tiler sets `Cut` where it clips a
 /// road at a tile boundary, so the renderer continues the line into the
