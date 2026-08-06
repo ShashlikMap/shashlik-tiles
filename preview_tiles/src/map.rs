@@ -2,7 +2,9 @@ use crate::vertex::Vertex2dBuffer;
 use lyon_tessellation::{
     FillOptions, FillRule, FillTessellator, StrokeOptions, StrokeTessellator, geom::Point,
 };
-use tiles::decode::{AreaKind, DecodedTile, PoiKind, RoadKind, Scene, SceneView};
+use tiles::decode::{
+    AreaKind, DecodedTile, PoiKind, RoadKind, Scene, SceneArea, SceneRoad, SceneView,
+};
 use tiles::reader::{FileRangeReader, HttpRangeReader, PmTilesReader, RangeReader};
 use tiles::view::TileCache;
 
@@ -22,6 +24,28 @@ pub async fn open_world(source: &str) -> World {
     SceneView::new(cache)
 }
 
+/// Base geometry (areas + roads) referenced for painter-order sorting.
+enum Base<'a> {
+    Area(&'a SceneArea),
+    Road(&'a SceneRoad),
+}
+
+impl Base<'_> {
+    /// Painter's-order key (drawn ascending = bottom first):
+    /// 1. `layer` — OSM stacking level; bridges (+1) / tunnels (−1) already carry
+    ///    a synthesized layer, so this alone stacks them and pushes tunnels under
+    ///    surrounding surface geometry.
+    /// 2. style rank — areas (0) under roads (1) within a layer.
+    /// 3. kind rank — ordering among same-style features (e.g. minor roads under
+    ///    major, water under vegetation).
+    fn order_key(&self) -> (i32, u8, u8) {
+        match self {
+            Base::Area(a) => (a.layer as i32, 0, area_rank(a.kind)),
+            Base::Road(r) => (r.layer as i32, 1, road_rank(r.kind)),
+        }
+    }
+}
+
 pub fn tessellate(scene: &Scene, origin: [f64; 2], line_width: f32) -> Vertex2dBuffer {
     let mut buffer = Vertex2dBuffer::default();
     let mut stess = StrokeTessellator::new();
@@ -33,58 +57,50 @@ pub fn tessellate(scene: &Scene, origin: [f64; 2], line_width: f32) -> Vertex2dB
         )
     };
 
-    for a in scene.areas() {
-        // Stamp the palette index for this feature onto every vertex it produces.
-        buffer.current_color = area_color(a.kind);
-        let opts = FillOptions::default().with_fill_rule(FillRule::NonZero);
-        let mut b = ftess.builder(&opts, &mut buffer);
-        for ring in &a.rings {
-            let mut pts = ring.iter().map(|&c| rel(c));
-            if let Some(first) = pts.next() {
-                b.begin(first);
-                for p in pts {
-                    b.line_to(p);
+    // Draw order is index order (painter's algorithm, no depth test). Collect base
+    // geometry and sort so lower layers / areas render before higher layers /
+    // roads. POIs are drawn last, always on top.
+    let mut base: Vec<Base> = Vec::with_capacity(scene.areas().len() + scene.roads().len());
+    base.extend(scene.areas().iter().map(Base::Area));
+    base.extend(scene.roads().iter().map(Base::Road));
+    base.sort_by_key(Base::order_key);
+
+    for b in &base {
+        match b {
+            Base::Area(a) => {
+                buffer.current_color = area_color(a.kind);
+                let opts = FillOptions::default().with_fill_rule(FillRule::NonZero);
+                let mut fb = ftess.builder(&opts, &mut buffer);
+                for ring in &a.rings {
+                    let mut pts = ring.iter().map(|&c| rel(c));
+                    if let Some(first) = pts.next() {
+                        fb.begin(first);
+                        for p in pts {
+                            fb.line_to(p);
+                        }
+                        fb.end(true);
+                    }
                 }
-                b.end(true);
+                fb.build().unwrap();
+            }
+            Base::Road(r) => {
+                buffer.current_color = road_color(r.kind);
+                let opts = StrokeOptions::default().with_line_width(line_width);
+                let mut sb = stess.builder(&opts, &mut buffer);
+                let mut pts = r.coords.iter().map(|&c| rel(c));
+                if let Some(first) = pts.next() {
+                    sb.begin(first);
+                    for p in pts {
+                        sb.line_to(p);
+                    }
+                    sb.end(false);
+                    sb.build().unwrap();
+                }
             }
         }
-        b.build().unwrap();
     }
 
-    for r in scene.roads() {
-        buffer.current_color = road_color(r.kind);
-        let opts = StrokeOptions::default().with_line_width(line_width);
-        let mut b = stess.builder(&opts, &mut buffer);
-        let mut pts = r.coords.iter().map(|&c| rel(c));
-        if let Some(first) = pts.next() {
-            b.begin(first);
-            for p in pts {
-                b.line_to(p);
-            }
-            b.end(false);
-            b.build().unwrap();
-        }
-    }
-
-    // wireframe drawing for testing welding
-    // for a in scene.areas() {
-    //     let opts = StrokeOptions::default().with_line_width(line_width);
-    //     let mut b = stess.builder(&opts, &mut buffer);
-
-    //     for ring in &a.rings {
-    //         let mut pts = ring.iter().map(|&c| rel(c));
-    //         if let Some(first) = pts.next() {
-    //             b.begin(first);
-    //             for p in pts {
-    //                 b.line_to(p);
-    //             }
-    //             b.end(true);
-    //         }
-    //     }
-    //     b.build().unwrap();
-    // }
-
-    // POI placeholder marker
+    // POI markers — always on top.
     let half = (line_width * 2.0).max(1.0);
     for p in scene.pois() {
         buffer.current_color = poi_color(p.kind);
@@ -100,6 +116,32 @@ pub fn tessellate(scene: &Scene, origin: [f64; 2], line_width: f32) -> Vertex2dB
     }
 
     buffer
+}
+
+/// Draw rank among same-layer areas (drawn ascending): background land first,
+/// then water, vegetation, buildings on top.
+fn area_rank(kind: AreaKind) -> u8 {
+    match kind {
+        AreaKind::Land => 0,
+        AreaKind::Grass => 1,
+        AreaKind::Water => 2,
+        AreaKind::Forest => 3,
+        AreaKind::Building => 4,
+    }
+}
+
+/// Draw rank among same-layer roads (drawn ascending): minor first, major on top
+/// so junctions read correctly.
+fn road_rank(kind: RoadKind) -> u8 {
+    use RoadKind::*;
+    match kind {
+        Footway | Service | LivingStreet | Raceway | Unknown => 0,
+        Residential | Unclassified => 1,
+        RailMinor | Rail => 2,
+        Tertiary | Secondary => 3,
+        Primary | Trunk => 4,
+        Motorway | MajorRoad => 5,
+    }
 }
 
 /// Palette index for a POI kind. Must match the palette in `shader.wgsl`.
