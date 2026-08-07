@@ -295,7 +295,7 @@ impl Scene {
     where
         V: TileView<DecodedTile> + ?Sized,
     {
-        Scene::from_visible(view.update(cam).await, cam.zoom.round() as u8)
+        Scene::from_visible(view.update(cam).await, cam.zoom.floor() as u8)
     }
 
     /// Assemble a scene from an already-fetched visible tile set (coordinate
@@ -312,15 +312,14 @@ impl Scene {
             .map(|v| v.tile.z)
             .unwrap_or(0);
 
-        // Never filter below the level of the tiles we actually loaded. The tile
-        // level snaps to the nearest materialized zoom (switches at x.0), while
-        // `display_zoom` is `round(camera)` (switches at x.5) — so in the half-zoom
-        // band between them we'd load, say, z10 tiles yet filter as if at z9,
-        // hiding every class materialized at z10 (motorway/trunk/…). Clamping up to
-        // `target_zoom` closes that gap; overzoom beyond the finest level still
-        // reveals more, since there `display_zoom > target_zoom`.
-        let display_zoom = display_zoom.max(target_zoom);
-
+        // `display_zoom` is the live camera zoom (see the caller): a class shows
+        // once the camera reaches its `display_min_zoom`. It is deliberately NOT
+        // clamped up to `target_zoom` — a class materialized at the loaded tile
+        // level must still stay hidden until the camera reaches its threshold
+        // (e.g. rail is stored in z12 tiles, which the 512px display loads around
+        // camera 10, but must not appear until camera 12). Continuity of the
+        // backbone (water/land/major roads) is ensured by giving those classes a
+        // low `display_min_zoom`, not by clamping.
         let mut extent = 0u16;
         let mut weldable: Vec<SceneRoad> = Vec::new(); // exact-tile roads to join
         let mut roads: Vec<SceneRoad> = Vec::new(); // fallback roads (kept as-is)
@@ -471,10 +470,11 @@ impl<V: TileView<DecodedTile>> SceneView<V> {
     /// returned scene is still valid — reuse it.
     pub async fn update(&mut self, cam: &Camera) -> Option<Scene> {
         let visible = self.view.update(cam).await;
-        // Filter by the live camera zoom, so the rebuild key must include it:
-        // crossing a class's min_zoom threshold changes the scene even when the
-        // visible tile set is unchanged.
-        let display_zoom = cam.zoom.round() as u8;
+        // Class visibility keys off the *raw* camera zoom (floored), so
+        // `display_min_zoom = N` means "appears at camera N" — not the effective
+        // (tile-selection) zoom. The rebuild key must include it: crossing a
+        // class's threshold changes the scene even when the tile set is unchanged.
+        let display_zoom = cam.zoom.floor() as u8;
         let key = visible_key(&visible, display_zoom);
         if self.last_key == Some(key) {
             return None;

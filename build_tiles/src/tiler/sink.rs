@@ -17,11 +17,18 @@ use std::io;
 use std::path::Path;
 
 /// Coarsest zoom at which a shape is materialized from raw per-feature geometry.
-const AGG_MAX_ZOOM: u8 = 8;
+/// Raised from 8 to 10 to fix a busy z10 band: at the old boundary, raw
+/// (unmerged) forest switched on right at z10 — the same tile level `target_level`
+/// snaps to across most of the camera 8–10 range — dumping thousands of small
+/// polygons in at once. Keeping the light aggregated forest through z10 defers
+/// that to z12.
+const AGG_MAX_ZOOM: u8 = 10;
 
 /// Merged major roads are clipped into tiles up to this zoom; raw ways take over
-/// at z >= 10 (their `min_zoom`), so the ranges don't overlap.
-const ROAD_AGG_MAX_ZOOM: u8 = 8;
+/// at z >= 12 (their `min_zoom`), so the ranges don't overlap. Raised alongside
+/// `AGG_MAX_ZOOM` for the same reason: raw motorway/trunk/primary/rail used to
+/// all switch on simultaneously at z10.
+const ROAD_AGG_MAX_ZOOM: u8 = 10;
 
 /// Whether a kind is materialized from the global aggregation mask at coarse
 #[inline]
@@ -149,7 +156,7 @@ impl TileSink {
 
     /// Clip a merged **major** road (continuous line assembled from many ways)
     /// into the coarse tiles (`z <= ROAD_AGG_MAX_ZOOM`) — the counterpart to the
-    /// raw-way path in [`push_road`], which only runs at `z >= 10`. No overlap:
+    /// raw-way path in [`push_road`], which only runs at `z >= 12`. No overlap:
     /// the two zoom ranges are disjoint. Called once per merged line after
     /// extraction.
     pub fn push_aggregated_road(&self, road: &Road) {

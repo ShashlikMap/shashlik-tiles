@@ -43,6 +43,17 @@ impl Camera {
         }
     }
 
+    /// The slippy zoom the map is actually displayed at. Tile ids and zoom
+    /// numbering use the standard 256-px convention, but tiles are drawn
+    /// [`TILE_RENDER_PX`] px each — so a `TILE_RENDER_PX` of 512 shows one level
+    /// finer than `zoom`. Selecting the tile level and the display-filter zoom
+    /// from this (not the raw `zoom`) keeps loaded detail and class visibility in
+    /// step with what's on screen.
+    #[inline]
+    pub fn effective_zoom(&self) -> f64 {
+        self.zoom + (TILE_RENDER_PX / 256.0).log2()
+    }
+
     /// Build a reusable projection from scene coordinates (as produced by
     /// `Scene`, at `target_zoom` with tile `extent`) to screen pixels. Precomputes
     /// the mercator centre, scale, and rotation once — call
@@ -310,7 +321,7 @@ where
     T: TilePayload,
 {
     async fn update(&self, cam: &Camera) -> Vec<VisibleTile<T>> {
-        let level = self.target_level(cam.zoom);
+        let level = self.target_level(cam.effective_zoom());
         let tiles: Vec<Tile> = self.visible_range(cam, level, 0).tiles().collect();
         let protected: HashSet<Tile> = tiles.iter().copied().collect();
 
@@ -525,10 +536,12 @@ mod tests {
     #[tokio::test]
     async fn zoom_snaps_to_nearest_materialized_level() {
         let cache: TileCache<_, Vec<u8>> = TileCache::new(DenseSource, vec![12, 14], 1 << 20, 0);
-        // Midpoint between 12 and 14 is 13: above it snaps to 14, below to 12.
-        let visible = cache.update(&camera_at(13.5, 256.0)).await;
+        // Selection uses the *effective* zoom (camera + 1 with 512px tiles), so the
+        // 12↔14 midpoint of effective 13 lands at camera 12: above snaps to 14,
+        // below to 12.
+        let visible = cache.update(&camera_at(12.5, 256.0)).await;
         assert!(visible.iter().all(|v| v.tile.z == 14));
-        let visible = cache.update(&camera_at(12.4, 256.0)).await;
+        let visible = cache.update(&camera_at(11.4, 256.0)).await;
         assert!(visible.iter().all(|v| v.tile.z == 12));
     }
 

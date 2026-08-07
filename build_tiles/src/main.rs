@@ -2,9 +2,9 @@ pub mod borders;
 pub mod classifier;
 pub mod extractor;
 pub mod major_roads;
-pub mod relation_features;
 pub mod mask;
 pub mod node_cache;
+pub mod relation_features;
 pub mod route_roads;
 pub mod shapes;
 pub mod sink;
@@ -338,29 +338,39 @@ fn main() {
             geo::algorithm::bool_ops::unary_union(&water)
         };
         println!("Merged water polygons: {}", merged_water.0.len());
-
+        let pb = ProgressBar::new(merged_water.0.len() as u64);
+        pb.set_style(
+            ProgressStyle::with_template(
+                "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} water polygons tiled",
+            )
+            .unwrap()
+            .progress_chars("#>-"),
+        );
         merged_water.0.into_par_iter().for_each(|poly| {
             sink.push(Shape::Area(Area::new(AreaKind::Water, poly, -1, 0)));
+            pb.inc(1);
         });
+        pb.finish();
     }
     // ─────────────────────────── FOREST aggregation ──────────────────────────
-    // The mask was filled during extraction; close + vectorize it into merged
-    // forest blobs and clip those into the coarse (z <= AGG_MAX_ZOOM) tiles. Raw
-    // forests already covered the finer zooms via the extraction stream.
     println!("Aggregating forests from mask...");
     let merged_forests = forest_mask.merged_polygons();
     println!("Merged forest polygons: {}", merged_forests.len());
+    // One unit of work = one merged forest blob clipped into the coarse tiles.
+    let pb = ProgressBar::new(merged_forests.len() as u64);
+    pb.set_style(
+        ProgressStyle::with_template(
+            "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} forest blobs tiled",
+        )
+        .unwrap()
+        .progress_chars("#>-"),
+    );
     merged_forests.into_par_iter().for_each(|poly| {
         sink.push_aggregated(&Area::new(AreaKind::Forest, poly, 0, 0));
+        pb.inc(1);
     });
-
-    // ────────────────────────── MAJOR ROAD aggregation ───────────────────────
-    // Build the low-zoom network from road route relations that touch a motorway,
-    // joining their member ways into continuous lines clipped into the coarse
-    // (z <= ROAD_AGG_MAX_ZOOM) tiles. Raw ways cover z >= 10.
+    pb.finish();
     // ─────────────────────── RELATION-DRIVEN FEATURES ────────────────────────
-    // Route-derived major roads + country borders, built from OSM relations with
-    // a single shared relations pass and a single shared ways pass.
     println!("Building relation-driven features (major roads, borders)...");
     relation_features::run(
         &mut osm_reader,

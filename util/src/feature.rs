@@ -62,12 +62,12 @@ impl RoadKind {
     pub fn min_zoom(self) -> u8 {
         use RoadKind::*;
         match self {
-            MajorRoad => 4, // merged low-zoom network
-            Border => 4,    // country border, visible from the lowest zoom
+            MajorRoad => 4,
+            Border => 4,
             Motorway | Trunk | Primary => 10,
             Secondary => 12,
-            Rail => 10,      // heavy mainline rail
-            RailMinor => 12, // light rail / narrow gauge
+            Rail => 12,
+            RailMinor => 14,
             Tertiary | Unclassified | Residential | Raceway => 14,
             LivingStreet | Service | Footway | Unknown => 16,
         }
@@ -82,9 +82,9 @@ impl RoadKind {
             MajorRoad => 5,
             Border => 4,
             Motorway | Trunk | Primary => 10,
-            Rail => 10,
-            RailMinor => 12,
-            Secondary => 12,
+            Rail => 12,
+            RailMinor => 14,
+            Secondary => 13,
             Tertiary | Unclassified | Residential | Raceway => 15,
             LivingStreet | Service | Footway | Unknown => 17,
         }
