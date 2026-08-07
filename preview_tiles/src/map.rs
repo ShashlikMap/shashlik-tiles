@@ -141,6 +141,7 @@ fn road_rank(kind: RoadKind) -> u8 {
         Tertiary | Secondary => 3,
         Primary | Trunk => 4,
         Motorway | MajorRoad => 5,
+        Border => 6,
     }
 }
 
@@ -166,9 +167,10 @@ fn area_color(kind: AreaKind) -> u32 {
 fn road_color(kind: RoadKind) -> u32 {
     use RoadKind::*;
     match kind {
-        MajorRoad => 8, // merged low-zoom network, styled distinctly
+        MajorRoad => 8,
         Rail => 9,
         RailMinor => 10,
+        Border => 12,
         Motorway | Trunk | Primary => 5,
         Secondary | Tertiary => 6,
         _ => 7,

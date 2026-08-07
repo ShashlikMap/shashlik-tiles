@@ -1,6 +1,8 @@
+pub mod borders;
 pub mod classifier;
 pub mod extractor;
 pub mod major_roads;
+pub mod relation_features;
 pub mod mask;
 pub mod node_cache;
 pub mod route_roads;
@@ -205,6 +207,10 @@ fn main() {
             ("building".into(), vec![]),
             ("type".into(), vec!["multipolygon".into()]),
         ],
+        // Country-boundary relations: keep them so their member-way nodes get
+        // cached in the node store (the border builder resolves geometry from it).
+        // `admin_level=2` is tight — only country boundaries.
+        vec![("admin_level".into(), vec!["2".into()])],
     ]);
 
     let (indicator, progress) = progress_bar();
@@ -352,12 +358,16 @@ fn main() {
     // Build the low-zoom network from road route relations that touch a motorway,
     // joining their member ways into continuous lines clipped into the coarse
     // (z <= ROAD_AGG_MAX_ZOOM) tiles. Raw ways cover z >= 10.
-    println!("Aggregating major roads from route relations...");
-    route_roads::build(
+    // ─────────────────────── RELATION-DRIVEN FEATURES ────────────────────────
+    // Route-derived major roads + country borders, built from OSM relations with
+    // a single shared relations pass and a single shared ways pass.
+    println!("Building relation-driven features (major roads, borders)...");
+    relation_features::run(
         &mut osm_reader,
         &index,
         &node_store,
         &sink,
+        &[&route_roads::RouteRoads, &borders::Borders],
         progress.clone(),
     );
 

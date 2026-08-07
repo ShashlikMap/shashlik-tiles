@@ -4,6 +4,7 @@ use crate::shapes::{AreaKind, LabelClass, Lanes, PoiKind, RoadKind, RoadStructur
 use hashbrown::HashMap;
 use osm_pbf::tags::Tag;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ShapeClassification {
     Road(RoadKind),
     Area(AreaKind),

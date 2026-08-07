@@ -27,6 +27,9 @@ pub enum RoadKind {
     /// Minor railway: light rail / narrow gauge. Local/urban, shown only at
     /// finer zooms than [`Rail`](RoadKind::Rail).
     RailMinor,
+    /// Country border (`boundary=administrative`, `admin_level=2`). A linear
+    /// overlay riding the road pipeline; the renderer styles it distinctly.
+    Border,
 }
 
 impl RoadKind {
@@ -48,6 +51,7 @@ impl RoadKind {
             12 => MajorRoad,
             13 => Rail,
             14 => RailMinor,
+            15 => Border,
             _ => return None,
         })
     }
@@ -59,10 +63,11 @@ impl RoadKind {
         use RoadKind::*;
         match self {
             MajorRoad => 4, // merged low-zoom network
+            Border => 4,    // country border, visible from the lowest zoom
             Motorway | Trunk | Primary => 10,
             Secondary => 12,
-            Rail => 10,        // heavy mainline rail
-            RailMinor => 12,   // light rail / narrow gauge
+            Rail => 10,      // heavy mainline rail
+            RailMinor => 12, // light rail / narrow gauge
             Tertiary | Unclassified | Residential | Raceway => 14,
             LivingStreet | Service | Footway | Unknown => 16,
         }
@@ -74,13 +79,14 @@ impl RoadKind {
     pub fn display_min_zoom(self) -> u8 {
         use RoadKind::*;
         match self {
-            MajorRoad => 4,
+            MajorRoad => 5,
+            Border => 4,
             Motorway | Trunk | Primary => 10,
             Rail => 10,
             RailMinor => 12,
             Secondary => 12,
-            Tertiary | Unclassified | Residential | Raceway => 14,
-            LivingStreet | Service | Footway | Unknown => 16,
+            Tertiary | Unclassified | Residential | Raceway => 15,
+            LivingStreet | Service | Footway | Unknown => 17,
         }
     }
 }
