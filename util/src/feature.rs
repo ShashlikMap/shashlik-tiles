@@ -73,6 +73,34 @@ impl RoadKind {
         }
     }
 
+    /// Approximate real-world full carriageway width in metres for a given total
+    /// lane count (`0` = untagged → a per-kind default). Drives the
+    /// proportional stroke width at high zoom; the renderer applies a per-type
+    /// pixel floor on top for low zoom.
+    pub fn width_m(self, total_lanes: u8) -> f32 {
+        const LANE_M: f32 = 3.7;
+        let lanes = if total_lanes > 0 {
+            total_lanes as f32
+        } else {
+            self.default_lanes()
+        };
+        lanes * LANE_M
+    }
+
+    /// Fallback full-width lane count for roads with no `lanes` tag.
+    fn default_lanes(self) -> f32 {
+        use RoadKind::*;
+        match self {
+            Motorway | MajorRoad => 6.0,
+            Trunk | Primary => 4.0,
+            Secondary | Tertiary => 2.0,
+            Unclassified | Residential | LivingStreet | Raceway | Unknown => 2.0,
+            Service | Footway => 1.0,
+            Rail | RailMinor => 1.0,
+            Border => 1.0, // not a carriageway; the pixel floor dominates
+        }
+    }
+
     /// Display threshold: coarsest camera zoom at which a road of this kind is
     /// shown. Independent of `Self::min_zoom` so the renderer can
     /// reveal / hide classes without rebuilding tiles
@@ -302,5 +330,15 @@ pub struct Lanes {
 impl Lanes {
     pub fn new(forward: u8, backward: u8) -> Self {
         Self { forward, backward }
+    }
+
+    /// The split as seen from the opposite travel direction: forward and backward
+    /// exchanged. Reversing a road's geometry must apply this so that "backward"
+    /// keeps naming the same physical side (and the center line stays put).
+    pub fn swapped(self) -> Self {
+        Self {
+            forward: self.backward,
+            backward: self.forward,
+        }
     }
 }

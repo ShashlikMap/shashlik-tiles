@@ -209,12 +209,16 @@ pub struct Scene {
 pub struct SceneRoad {
     pub kind: RoadKind,
     pub layer: i8,
-    pub lanes: Lanes,
     pub start: EdgeNode,
     pub end: EdgeNode,
     pub structure: RoadStructure,
     pub name: Option<String>,
     pub coords: Vec<[i32; 2]>,
+    /// Per-vertex lane split (forward/backward), parallel to `coords`. The total
+    /// (`forward + backward`) drives the stroke width and varies it smoothly at
+    /// lane changes; the split places the direction divider (center line) for
+    /// lane-line rendering. `forward == backward == 0` means untagged.
+    pub lanes: Vec<Lanes>,
 }
 
 pub struct SceneArea {
@@ -349,11 +353,11 @@ impl Scene {
                 let road = SceneRoad {
                     kind: r.kind,
                     layer: r.layer,
-                    lanes: r.lanes,
                     start: r.start,
                     end: r.end,
                     structure: r.structure,
                     name: r.name.clone(),
+                    lanes: vec![r.lanes; r.coords.len()],
                     coords: r.coords.iter().map(|&c| to_scene(c)).collect(),
                 };
                 // Only same-zoom (exact) tiles weld; fallbacks differ in scale.
@@ -401,7 +405,8 @@ impl Scene {
             }
         }
 
-        roads.extend(weld_scene_roads(weldable));
+        roads.extend(weld_scene_roads(weldable, extent));
+        blend_join_widths(&mut roads, extent);
         // Areas are emitted per tile — no cross-tile union. Edge-exact clipping
         // makes same-kind neighbours abut seamlessly when filled, and the per-
         // vertex `clip` flags carry the tile-cut edges so a border pass can skip
@@ -503,42 +508,91 @@ fn visible_key(visible: &[VisibleTile<DecodedTile>], display_zoom: u8) -> u64 {
     h.finish()
 }
 
-/// Weld road segments split at tile boundaries into continuous polylines. Same
-/// rule as the builder: within a group of matching attributes, join where a
-/// coordinate is shared by exactly two `Cut` endpoints (so junctions and
-/// viewport-edge cuts stay split).
-fn weld_scene_roads(roads: Vec<SceneRoad>) -> Vec<SceneRoad> {
-    let mut groups: HashMap<(i8, u8, u8, u8, Option<String>), Vec<usize>> = HashMap::new();
+/// Fraction of the tile extent used as the endpoint-welding tolerance: two piece
+/// ends within `extent / WELD_TOL_DIV` scene units are treated as the same node.
+/// At extent 8192 this is 8 units ≈ a couple of metres at the base grid zoom —
+/// far below the spacing between distinct or parallel roads (tens of metres), so
+/// it only ever stitches a shared node that OSM digitised as two near-coincident
+/// points, never merges separate roads.
+const WELD_TOL_DIV: i32 = 1024;
+
+/// Weld road segments into continuous polylines — pieces split across tile
+/// boundaries, pieces split within a tile (OSM ways sharing an interior node,
+/// e.g. at a lane-count change), and pieces whose shared node drifted by sub-metre
+/// digitising noise. Within a group of matching geometry attributes, join wherever
+/// exactly two piece-ends meet (so real junctions and lone dead-ends / viewport
+/// cuts stay split).
+fn weld_scene_roads(roads: Vec<SceneRoad>, extent: u16) -> Vec<SceneRoad> {
+    // Group by `kind` only — not lanes, name, or **layer**. A road that changes
+    // lane count, name, or dips through a bridge / tunnel portal (a layer change)
+    // is one continuous carriageway and must weld into a single stroke. Dropping
+    // `layer` is safe because welding is connectivity-based: a bridge flying over
+    // a road shares no node with it, so only genuinely end-to-end-connected pieces
+    // of the same road merge. The welded stroke takes the max layer of its pieces
+    // (bridges keep draw-order priority); tunnel styling is a later milestone.
+    let tol = (extent as i32 / WELD_TOL_DIV).max(1);
+    let mut groups: HashMap<u8, Vec<usize>> = HashMap::new();
     for (i, r) in roads.iter().enumerate() {
-        let key = (
-            r.layer,
-            r.kind as u8,
-            r.lanes.forward,
-            r.lanes.backward,
-            r.name.clone(),
-        );
-        groups.entry(key).or_default().push(i);
+        groups.entry(r.kind as u8).or_default().push(i);
     }
     let mut out = Vec::new();
     for idxs in groups.into_values() {
-        weld_group(&roads, &idxs, &mut out);
+        weld_group(&roads, &idxs, tol, &mut out);
     }
     out
 }
 
-fn weld_group(roads: &[SceneRoad], idxs: &[usize], out: &mut Vec<SceneRoad>) {
-    let mut at: HashMap<[i32; 2], Vec<(usize, bool)>> = HashMap::new();
+/// Minimum cos(turn) for a piece to count as *continuing* a line through a
+/// junction (degree > 2). ~0.5 ≈ 60°: a sharper piece is a branch, so the line
+/// ends and the branch stays a separate stroke. The straightest candidate always
+/// wins, so this only gates the case where no near-straight continuation exists.
+const CONTINUATION_MIN_COS: f64 = 0.5;
+
+/// Unit direction from `a` to `b` in scene units.
+fn dirf(a: [i32; 2], b: [i32; 2]) -> [f64; 2] {
+    let (dx, dy) = ((b[0] - a[0]) as f64, (b[1] - a[1]) as f64);
+    let l = (dx * dx + dy * dy).sqrt().max(1e-9);
+    [dx / l, dy / l]
+}
+
+fn weld_group(roads: &[SceneRoad], idxs: &[usize], tol: i32, out: &mut Vec<SceneRoad>) {
+    // Spatial hash of every piece endpoint. Two ends "meet" when they lie within
+    // `tol` scene units (chebyshev) of each other; the cell size equals `tol`, so
+    // any such pair falls in the same or an adjacent cell. Registering all
+    // endpoints (not only tile-boundary `Cut`s) welds interior shared nodes too,
+    // and the tolerance stitches sub-metre gaps where a shared node was digitised
+    // as two near-coincident points.
+    let cell = tol.max(1);
+    let key = |c: [i32; 2]| (c[0].div_euclid(cell), c[1].div_euclid(cell));
+    // Flat port list: (piece slot in `idxs`, is_start, coord).
+    let mut ports: Vec<(usize, bool, [i32; 2])> = Vec::with_capacity(idxs.len() * 2);
     for (k, &gi) in idxs.iter().enumerate() {
         let r = &roads[gi];
-        if r.start == EdgeNode::Cut {
-            at.entry(r.coords[0]).or_default().push((k, true));
-        }
-        if r.end == EdgeNode::Cut {
-            at.entry(*r.coords.last().unwrap())
-                .or_default()
-                .push((k, false));
-        }
+        ports.push((k, true, r.coords[0]));
+        ports.push((k, false, *r.coords.last().unwrap()));
     }
+    let mut cells: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+    for (pid, &(_, _, c)) in ports.iter().enumerate() {
+        cells.entry(key(c)).or_default().push(pid);
+    }
+    // Port ids within `tol` (chebyshev) of `c`, scanning the 3×3 cell block.
+    let cluster = |c: [i32; 2]| -> Vec<usize> {
+        let (cx, cy) = key(c);
+        let mut hits = Vec::new();
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                if let Some(v) = cells.get(&(cx + dx, cy + dy)) {
+                    for &pid in v {
+                        let pc = ports[pid].2;
+                        if (pc[0] - c[0]).abs().max((pc[1] - c[1]).abs()) <= tol {
+                            hits.push(pid);
+                        }
+                    }
+                }
+            }
+        }
+        hits
+    };
 
     let mut used = vec![false; idxs.len()];
     for seed in 0..idxs.len() {
@@ -548,40 +602,191 @@ fn weld_group(roads: &[SceneRoad], idxs: &[usize], out: &mut Vec<SceneRoad>) {
         used[seed] = true;
         let r0 = &roads[idxs[seed]];
         let mut coords = r0.coords.clone();
+        let mut lanes = r0.lanes.clone(); // parallel to coords
         let (mut start, mut end) = (r0.start, r0.end);
+        // Pieces may span structural layers (bridge/tunnel portals). The welded
+        // stroke draws at whichever layer covers the most of its length (by vertex
+        // count), so a mostly-surface road with a short bridge stays at surface
+        // level — and a mostly-elevated expressway with a short tunnel stays
+        // elevated. Per-section tunnel/bridge styling is a later milestone.
+        let mut layer_len: Vec<(i8, usize)> = vec![(r0.layer, r0.coords.len())];
 
         for _ in 0..2 {
-            while end == EdgeNode::Cut {
+            loop {
                 let tail = *coords.last().unwrap();
-                let next = at.get(&tail).and_then(|ports| {
-                    (ports.len() == 2).then(|| ports.iter().copied().find(|&(k, _)| !used[k]))?
-                });
-                let Some((j, j_is_start)) = next else { break };
+                let here = cluster(tail);
+                // Unused pieces meeting at the tail (the tail's own end is used).
+                let cands: Vec<usize> =
+                    here.iter().copied().filter(|&p| !used[ports[p].0]).collect();
+                if cands.is_empty() {
+                    break; // dead end
+                }
+                let pid = if here.len() <= 2 {
+                    // Degree ≤ 2: a single continuation — weld it at any angle, so
+                    // both gentle and sharp bends of one road join.
+                    cands[0]
+                } else {
+                    // Degree > 2 (a junction): weld only the piece that best
+                    // continues the line (smallest turn) so the road runs through
+                    // while branches stay split; if nothing continues closely
+                    // enough, the line ends here.
+                    let m = coords.len();
+                    let incoming = dirf(coords[m - 2], coords[m - 1]);
+                    let mut best = None;
+                    let mut best_score = CONTINUATION_MIN_COS;
+                    for &p in &cands {
+                        let (j, j_is_start, _) = ports[p];
+                        let rj = &roads[idxs[j]];
+                        let nn = rj.coords.len();
+                        let out = if j_is_start {
+                            dirf(rj.coords[0], rj.coords[1])
+                        } else {
+                            dirf(rj.coords[nn - 1], rj.coords[nn - 2])
+                        };
+                        let score = incoming[0] * out[0] + incoming[1] * out[1];
+                        if score > best_score {
+                            best_score = score;
+                            best = Some(p);
+                        }
+                    }
+                    match best {
+                        Some(p) => p,
+                        None => break,
+                    }
+                };
+                let (j, j_is_start, _) = ports[pid];
                 used[j] = true;
                 let rj = &roads[idxs[j]];
+                // Skip the coincident joining point when it's exact; keep it (a
+                // short bridge segment) when the two ends only nearly touch.
+                match layer_len.iter_mut().find(|(l, _)| *l == rj.layer) {
+                    Some(e) => e.1 += rj.coords.len(),
+                    None => layer_len.push((rj.layer, rj.coords.len())),
+                }
                 if j_is_start {
-                    coords.extend_from_slice(&rj.coords[1..]);
+                    let skip = usize::from(*coords.last().unwrap() == rj.coords[0]);
+                    coords.extend_from_slice(&rj.coords[skip..]);
+                    lanes.extend_from_slice(&rj.lanes[skip..]);
                     end = rj.end;
                 } else {
-                    coords.extend(rj.coords[..rj.coords.len() - 1].iter().rev().copied());
+                    // Piece appended in reverse: reverse its lane order AND swap
+                    // forward/backward, since its travel direction is now flipped.
+                    let n = rj.coords.len();
+                    let take = n - usize::from(*coords.last().unwrap() == rj.coords[n - 1]);
+                    coords.extend(rj.coords[..take].iter().rev().copied());
+                    lanes.extend(rj.lanes[..take].iter().rev().map(|l| l.swapped()));
                     end = rj.start;
                 }
             }
             coords.reverse();
+            // Flipping the whole polyline flips every vertex's travel direction.
+            lanes.reverse();
+            lanes.iter_mut().for_each(|l| *l = l.swapped());
             std::mem::swap(&mut start, &mut end);
         }
 
+        // Draw layer = the one covering the most length (ties → higher layer).
+        let layer = layer_len
+            .iter()
+            .max_by_key(|(l, c)| (*c, *l as i16))
+            .map(|&(l, _)| l)
+            .unwrap();
         let r = &roads[idxs[seed]];
         out.push(SceneRoad {
             kind: r.kind,
-            layer: r.layer,
-            lanes: r.lanes,
+            layer,
             start,
             end,
             structure: r.structure,
             name: r.name.clone(),
+            lanes,
             coords,
         });
+    }
+}
+
+/// Smooth stroke-width discontinuities where the welder correctly leaves same-kind
+/// polylines split — real junctions, divided-carriageway Y-splits, bridge/tunnel
+/// (layer) transitions. Welding the geometry there would fabricate a through-line
+/// or overshoot the node; instead we keep the pieces split and only match their
+/// **width** at the shared node: every incident same-kind endpoint is raised to
+/// the local maximum lane count, so the variable-width stroke tapers each piece's
+/// end segment up to a common join width instead of butting two different-width
+/// rectangles together. Endpoint lane counts are read before any are written, so
+/// the max is computed from original widths.
+fn blend_join_widths(roads: &mut [SceneRoad], extent: u16) {
+    let tol = (extent as i32 / WELD_TOL_DIV).max(1);
+    let cell = tol.max(1);
+    let key = |c: [i32; 2]| (c[0].div_euclid(cell), c[1].div_euclid(cell));
+    // Ports: (road idx, is_start). Coord/kind/lanes are looked up from `roads`.
+    let mut ports: Vec<(usize, bool)> = Vec::with_capacity(roads.len() * 2);
+    for (ri, r) in roads.iter().enumerate() {
+        if r.coords.len() >= 2 {
+            ports.push((ri, true));
+            ports.push((ri, false));
+        }
+    }
+    let coord = |&(ri, start): &(usize, bool)| -> [i32; 2] {
+        let r = &roads[ri];
+        if start {
+            r.coords[0]
+        } else {
+            *r.coords.last().unwrap()
+        }
+    };
+    // Total lanes (forward + backward) at a port's endpoint — the fill width.
+    let lane = |&(ri, start): &(usize, bool)| -> u8 {
+        let r = &roads[ri];
+        let l = if start { r.lanes[0] } else { *r.lanes.last().unwrap() };
+        l.forward.saturating_add(l.backward)
+    };
+    let mut cells: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+    for (pid, p) in ports.iter().enumerate() {
+        cells.entry(key(coord(p))).or_default().push(pid);
+    }
+
+    // Phase 1: compute the target lane count for each port (max among same-kind
+    // ports of *other* roads within `tol`, including itself). None = unchanged.
+    let mut targets: Vec<Option<u8>> = vec![None; ports.len()];
+    for (pid, p) in ports.iter().enumerate() {
+        let (c, kind, own) = (coord(p), roads[p.0].kind, lane(p));
+        let (cx, cy) = key(c);
+        let mut best = own;
+        let mut joined = false;
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                let Some(v) = cells.get(&(cx + dx, cy + dy)) else {
+                    continue;
+                };
+                for &qid in v {
+                    let q = &ports[qid];
+                    if q.0 == p.0 || roads[q.0].kind != kind {
+                        continue; // same road, or a different class — leave the step
+                    }
+                    let qc = coord(q);
+                    if (qc[0] - c[0]).abs().max((qc[1] - c[1]).abs()) > tol {
+                        continue;
+                    }
+                    joined = true;
+                    best = best.max(lane(q));
+                }
+            }
+        }
+        if joined && best > own {
+            targets[pid] = Some(best);
+        }
+    }
+
+    // Phase 2: apply. Hit the target total by adjusting only `forward` (keeping
+    // `backward`), so the widened endpoint's direction divider stays put; the
+    // endpoint is junction-adjacent where lane lines fade anyway.
+    for (pid, &(ri, start)) in ports.iter().enumerate() {
+        if let Some(t) = targets[pid] {
+            let r = &mut roads[ri];
+            let idx = if start { 0 } else { r.lanes.len() - 1 };
+            let b = r.lanes[idx].backward;
+            r.lanes[idx].forward = t.saturating_sub(b);
+        }
     }
 }
 
@@ -725,13 +930,18 @@ mod tests {
         SceneRoad {
             kind: RoadKind::Primary,
             layer: 0,
-            lanes: Lanes::new(1, 1),
             start,
             end,
             structure: RoadStructure::None,
             name: None,
+            lanes: vec![Lanes::new(1, 1); coords.len()], // total 2
             coords,
         }
+    }
+
+    /// Per-vertex total lane count (forward + backward), for assertions.
+    fn totals(r: &SceneRoad) -> Vec<u8> {
+        r.lanes.iter().map(|l| l.forward + l.backward).collect()
     }
 
     #[test]
@@ -740,7 +950,7 @@ mod tests {
         // Two pieces meeting at the tile edge [8192,50] → one polyline.
         let a = scene_road(vec![[4000, 50], [8192, 50]], Disconnected, Cut);
         let b = scene_road(vec![[8192, 50], [12000, 50]], Cut, Disconnected);
-        let welded = weld_scene_roads(vec![a, b]);
+        let welded = weld_scene_roads(vec![a, b], 8192);
         assert_eq!(welded.len(), 1);
         assert_eq!(welded[0].coords, vec![[4000, 50], [8192, 50], [12000, 50]]);
         assert_eq!(
@@ -754,8 +964,139 @@ mod tests {
         use EdgeNode::{Cut, Disconnected};
         // Cut at the viewport edge with no neighbour loaded → stays cut.
         let a = scene_road(vec![[0, 50], [8192, 50]], Disconnected, Cut);
-        let welded = weld_scene_roads(vec![a]);
+        let welded = weld_scene_roads(vec![a], 8192);
         assert_eq!(welded.len(), 1);
         assert_eq!(welded[0].end, Cut);
+    }
+
+    #[test]
+    fn welds_lane_change_at_an_interior_connected_node() {
+        use EdgeNode::{Connected, Disconnected};
+        // One road that changes lane count is two OSM ways meeting at an interior
+        // Connected node (never a Cut). They must weld into one polyline whose
+        // per-vertex lane_counts carry the change, so the stroke tapers smoothly.
+        let mut a = scene_road(vec![[0, 0], [100, 0]], Disconnected, Connected);
+        a.lanes = vec![Lanes::new(2, 0); 2];
+        let mut b = scene_road(vec![[100, 0], [200, 0]], Connected, Disconnected);
+        b.lanes = vec![Lanes::new(3, 0); 2];
+        let welded = weld_scene_roads(vec![a, b], 8192);
+        assert_eq!(welded.len(), 1, "adjacent ways must weld into one stroke");
+        assert_eq!(welded[0].coords, vec![[0, 0], [100, 0], [200, 0]]);
+        assert_eq!(welded[0].lanes.len(), welded[0].coords.len());
+        // The lane count steps at the shared node — width ramps across the segment.
+        assert_eq!(totals(&welded[0]), vec![2, 2, 3]);
+    }
+
+    #[test]
+    fn weld_keeps_lane_direction_consistent_when_reversing() {
+        use EdgeNode::{Connected, Disconnected};
+        // Two halves of one asymmetric road (2 forward / 1 backward). Piece B is
+        // stored in the opposite direction, so the welder appends it reversed — its
+        // forward/backward must swap so every welded vertex names the same physical
+        // side (otherwise the center line flips mid-road / with the weld orientation).
+        let mut a = scene_road(vec![[0, 0], [100, 0]], Disconnected, Connected);
+        a.lanes = vec![Lanes::new(2, 1); 2];
+        let mut b = scene_road(vec![[200, 0], [100, 0]], Disconnected, Connected);
+        b.lanes = vec![Lanes::new(1, 2); 2]; // stored reversed → split swapped
+        let welded = weld_scene_roads(vec![a, b], 8192);
+        assert_eq!(welded.len(), 1);
+        let first = welded[0].lanes[0];
+        assert!(
+            welded[0].lanes.iter().all(|&l| l == first),
+            "split stays consistent along the weld: {:?}",
+            welded[0].lanes
+        );
+        assert_eq!(first.forward + first.backward, 3);
+        assert_ne!(first.forward, first.backward, "asymmetric split preserved");
+    }
+
+    #[test]
+    fn welds_the_through_line_at_a_junction() {
+        use EdgeNode::{Connected, Disconnected};
+        // A straight road (a—b) with a branch (c) at [100,0]: the straight line
+        // welds through the junction; the perpendicular branch stays split.
+        let a = scene_road(vec![[0, 0], [100, 0]], Disconnected, Connected);
+        let b = scene_road(vec![[100, 0], [200, 0]], Connected, Disconnected);
+        let c = scene_road(vec![[100, 0], [100, 100]], Connected, Disconnected);
+        let welded = weld_scene_roads(vec![a, b, c], 8192);
+        assert_eq!(welded.len(), 2, "through-line welds, branch stays split");
+        let through = welded.iter().find(|r| r.coords.len() == 3).unwrap();
+        assert_eq!(through.coords, vec![[0, 0], [100, 0], [200, 0]]);
+    }
+
+    #[test]
+    fn welds_both_lines_through_a_crossing() {
+        use EdgeNode::{Connected, Disconnected};
+        // Two straight same-kind roads crossing at [0,0]: each welds through, so
+        // the result is two crossing polylines with no butt-cap gap at the node.
+        let ew1 = scene_road(vec![[-100, 0], [0, 0]], Disconnected, Connected);
+        let ew2 = scene_road(vec![[0, 0], [100, 0]], Connected, Disconnected);
+        let ns1 = scene_road(vec![[0, -100], [0, 0]], Disconnected, Connected);
+        let ns2 = scene_road(vec![[0, 0], [0, 100]], Connected, Disconnected);
+        let welded = weld_scene_roads(vec![ew1, ew2, ns1, ns2], 8192);
+        assert_eq!(welded.len(), 2, "each straight line welds through the crossing");
+        assert!(welded.iter().all(|r| r.coords.len() == 3));
+    }
+
+    #[test]
+    fn stitches_a_sub_tolerance_gap() {
+        use EdgeNode::{Connected, Disconnected};
+        // A shared node digitised as two near-coincident points (5 units apart,
+        // under the 8-unit tolerance at extent 8192) must still weld into one
+        // stroke, bridging the gap.
+        let a = scene_road(vec![[0, 0], [100, 0]], Disconnected, Connected);
+        let b = scene_road(vec![[105, 0], [200, 0]], Connected, Disconnected);
+        let welded = weld_scene_roads(vec![a, b], 8192);
+        assert_eq!(welded.len(), 1, "sub-tolerance gap stitches");
+        // Bridge segment kept: both near-coincident points are present.
+        assert_eq!(welded[0].coords, vec![[0, 0], [100, 0], [105, 0], [200, 0]]);
+    }
+
+    #[test]
+    fn leaves_distinct_roads_beyond_tolerance_split() {
+        use EdgeNode::{Connected, Disconnected};
+        // Ends 40 units apart (well beyond the 8-unit tolerance) are distinct
+        // roads — e.g. parallel carriageways — and must not merge.
+        let a = scene_road(vec![[0, 0], [100, 0]], Disconnected, Connected);
+        let b = scene_road(vec![[100, 40], [200, 40]], Connected, Disconnected);
+        let welded = weld_scene_roads(vec![a, b], 8192);
+        assert_eq!(welded.len(), 2, "gap beyond tolerance stays split");
+    }
+
+    #[test]
+    fn blend_matches_width_at_a_split_join() {
+        use EdgeNode::{Connected, Disconnected};
+        // A 2-lane piece and a 1-lane piece of the same kind meet at a node the
+        // welder left split (here modelled as two separate roads). Their widths
+        // must match at the join: the 1-lane end is raised to 2, the 2-lane end
+        // stays 2. Interior vertices are untouched.
+        let mut wide = scene_road(vec![[0, 0], [50, 0], [100, 0]], Disconnected, Connected);
+        wide.lanes = vec![Lanes::new(2, 0); 3];
+        let mut thin = scene_road(vec![[100, 0], [150, 0], [200, 0]], Connected, Disconnected);
+        thin.lanes = vec![Lanes::new(1, 0); 3];
+        let mut roads = vec![wide, thin];
+        blend_join_widths(&mut roads, 8192);
+        assert_eq!(totals(&roads[0]), vec![2, 2, 2], "wide end unchanged");
+        assert_eq!(
+            totals(&roads[1]),
+            vec![2, 1, 1],
+            "thin join end raised to match; interior untouched"
+        );
+    }
+
+    #[test]
+    fn blend_leaves_different_kinds_alone() {
+        use EdgeNode::{Connected, Disconnected};
+        // A minor road ending into a major road of a different kind keeps its own
+        // width — no ballooning at the junction.
+        let mut major = scene_road(vec![[0, 0], [100, 0]], Disconnected, Connected);
+        major.kind = RoadKind::Primary;
+        major.lanes = vec![Lanes::new(2, 2); 2];
+        let mut minor = scene_road(vec![[100, 0], [200, 0]], Connected, Disconnected);
+        minor.kind = RoadKind::Service;
+        minor.lanes = vec![Lanes::new(1, 0); 2];
+        let mut roads = vec![major, minor];
+        blend_join_widths(&mut roads, 8192);
+        assert_eq!(totals(&roads[1]), vec![1, 1], "cross-kind join not blended");
     }
 }
