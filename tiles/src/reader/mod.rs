@@ -42,6 +42,15 @@ pub trait TileSource: Send + Sync {
     fn min_zoom(&self) -> u8;
     fn max_zoom(&self) -> u8;
 
+    /// Materialized zoom levels, ascending. A gap between consecutive entries
+    /// is a level the client must overzoom/underzoom to reach — it was never
+    /// built, not merely missing individual tiles. Default assumes every level
+    /// from `min_zoom` to `max_zoom` is present (no gaps); a source that skips
+    /// levels (e.g. a pyramid archive) should override this.
+    fn zoom_levels(&self) -> Vec<u8> {
+        (self.min_zoom()..=self.max_zoom()).collect()
+    }
+
     /// Fetch many tiles concurrently. The default fans out over tile(); a
     /// backend with a batch API (a SQL `IN (...)`, a coalesced range request)
     /// may override this.

@@ -15,6 +15,36 @@ pub const TILE_TYPE_UNKNOWN: u8 = 0;
 /// Target maximum root-directory size so the header + root fit one initial fetch.
 pub const ROOT_MAX: usize = 16 * 1024;
 
+/// Build the archive metadata JSON, recording the full set of materialized zoom
+/// levels (ascending). The header's `min_zoom`/`max_zoom` alone can't tell a
+/// skipped level (client overzooms/underzooms it) from one genuinely absent,
+/// so a reader that wants to self-configure needs this list.
+pub fn build_metadata(zoom_levels: &[u8]) -> Vec<u8> {
+    let mut s = String::from(r#"{"format":"shashlik-maptile","zoom_levels":["#);
+    for (i, z) in zoom_levels.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        s.push_str(&z.to_string());
+    }
+    s.push_str("]}");
+    s.into_bytes()
+}
+
+/// Parse the `zoom_levels` array out of archive metadata (ascending). `None` if
+/// absent or malformed (e.g. an archive written before this field existed, or a
+/// foreign PMTiles file) — the caller should fall back to `min_zoom..=max_zoom`.
+pub fn parse_zoom_levels(metadata: &[u8]) -> Option<Vec<u8>> {
+    let s = std::str::from_utf8(metadata).ok()?;
+    let key = "\"zoom_levels\":[";
+    let start = s.find(key)? + key.len();
+    let end = start + s[start..].find(']')?;
+    s[start..end]
+        .split(',')
+        .map(|t| t.trim().parse::<u8>().ok())
+        .collect()
+}
+
 /// A directory entry. A *tile* entry (`run_length >= 1`) addresses
 /// `[tile_id, tile_id + run_length)` at `(offset, length)` within the tile-data
 /// section. A leaf pointer (`run_length == 0`) points at a leaf directory at
@@ -344,6 +374,18 @@ mod tests {
         assert_eq!(find_entry(&entries, 11).unwrap().tile_id, 10); // inside run
         assert!(find_entry(&entries, 13).is_none()); // past the run, before leaf
         assert!(find_entry(&entries, 500).unwrap().is_leaf()); // descend leaf
+    }
+
+    #[test]
+    fn metadata_roundtrips_zoom_levels() {
+        let zooms = [3u8, 4, 6, 8, 10, 12, 14];
+        let bytes = build_metadata(&zooms);
+        assert_eq!(parse_zoom_levels(&bytes).unwrap(), zooms.to_vec());
+    }
+
+    #[test]
+    fn parse_zoom_levels_none_when_absent() {
+        assert_eq!(parse_zoom_levels(br#"{"format":"other"}"#), None);
     }
 
     #[test]

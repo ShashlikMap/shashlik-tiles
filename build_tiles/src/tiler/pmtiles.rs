@@ -13,6 +13,7 @@
 
 use super::writer::TileWriter;
 use hashbrown::HashMap;
+use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -33,6 +34,10 @@ pub struct PmTilesWriter {
     dedup: HashMap<u128, (u64, u32)>,
     min_zoom: u8,
     max_zoom: u8,
+    /// Distinct zoom levels actually written, so the archive metadata can
+    /// record which levels between `min_zoom`/`max_zoom` are materialized
+    /// versus skipped (client overzoom/underzoom).
+    zoom_levels: BTreeSet<u8>,
     /// Union of written tile bounds, in Web Mercator meters.
     bbox: Option<[f64; 4]>, // [min_x, min_y, max_x, max_y]
 }
@@ -53,6 +58,7 @@ impl PmTilesWriter {
             dedup: HashMap::new(),
             min_zoom: u8::MAX,
             max_zoom: 0,
+            zoom_levels: BTreeSet::new(),
             bbox: None,
         })
     }
@@ -60,6 +66,7 @@ impl PmTilesWriter {
     fn accumulate(&mut self, tile: Tile) {
         self.min_zoom = self.min_zoom.min(tile.z);
         self.max_zoom = self.max_zoom.max(tile.z);
+        self.zoom_levels.insert(tile.z);
         let b = tile.bounds();
         let (min, max) = (b.min(), b.max());
         self.bbox = Some(match self.bbox {
@@ -155,7 +162,8 @@ impl TileWriter for PmTilesWriter {
         let num_contents = self.dedup.len() as u64;
 
         let (root_dir, leaf_dirs) = pmtiles::build_directories(&entries, ROOT_MAX);
-        let metadata = br#"{"format":"shashlik-maptile"}"#.to_vec();
+        let zoom_levels: Vec<u8> = self.zoom_levels.iter().copied().collect();
+        let metadata = pmtiles::build_metadata(&zoom_levels);
 
         // Section layout: header | root_dir | metadata | leaf_dirs | tile_data.
         let root_off = HEADER_LEN as u64;
@@ -240,6 +248,9 @@ mod tests {
             "tile-a".len() + "tile-b-bigger".len() + "c".len()
         );
         assert_eq!(header.data_offset + header.data_length, bytes.len() as u64);
+        let metadata =
+            &bytes[header.metadata_offset as usize..(header.metadata_offset + header.metadata_length) as usize];
+        assert_eq!(pmtiles::parse_zoom_levels(metadata).unwrap(), vec![0, 1, 3]);
         // No temp file left behind.
         assert!(!path.with_extension("data.tmp").exists());
 

@@ -202,6 +202,15 @@ where
         }
     }
 
+    /// Create a cache that reads its materialized zoom levels straight from
+    /// `source` (`TileSource::zoom_levels`) instead of a caller-supplied list —
+    /// the self-configuring path for a real archive, so the client never has to
+    /// hardcode a zoom set that must match how the archive was built.
+    pub fn from_source(source: S, budget_bytes: usize, prefetch_ring: u32) -> Self {
+        let zoom_levels = source.zoom_levels();
+        Self::new(source, zoom_levels, budget_bytes, prefetch_ring)
+    }
+
     /// The materialized level nearest the camera zoom (ties go to the coarser
     /// level, which is cheaper and overzooms cleanly).
     fn target_level(&self, zoom: f64) -> u8 {

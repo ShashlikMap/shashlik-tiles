@@ -26,10 +26,6 @@ use tiles::Tile;
 
 /// zstd level for tile payloads (the reader zstd-decompresses).
 const ZSTD_LEVEL: i32 = 9;
-/// Materialized zooms (client overzooms the gaps). Built one at a time and
-/// flushed, so peak memory is a single zoom's tile set — trim the finest zooms
-/// here if the whole planet at z12/z14 doesn't fit.
-const ZOOMS: [u8; 6] = [14, 12, 10, 8, 6, 4];
 
 #[derive(Parser)]
 struct Args {
@@ -47,6 +43,15 @@ struct Args {
     /// Path to ocean water polygon shapefile, shorelines will be skipped if not provided
     #[arg(long)]
     water_shapefile: Option<String>,
+
+    /// Materialized zoom levels, comma-separated (client overzooms the gaps).
+    /// The highest value is the base/grid zoom (full detail); the lowest is the
+    /// pyramid floor. Built one at a time and flushed, so peak memory is a
+    /// single zoom's tile set — trim the finest zooms if the whole planet at
+    /// z12/z14 doesn't fit. Written into the archive metadata so the client can
+    /// read it back instead of hardcoding a matching list.
+    #[arg(long, value_delimiter = ',', default_value = "14,12,10,8,6,4")]
+    zooms: Vec<u8>,
 }
 
 /// Even-odd ray cast: is `(px, py)` inside the ring?
@@ -169,7 +174,15 @@ fn progress_bar() -> (ProgressBar, Arc<impl Fn(u64, u64) + Send + Sync>) {
 
 fn main() {
     let args = Args::parse();
-    let params = tiler::TileParams::new(14, 4, 6, 8192, 4.0);
+
+    let mut zooms = args.zooms;
+    zooms.sort_unstable();
+    zooms.dedup();
+    let (min_zoom, grid_zoom) = match (zooms.first(), zooms.last()) {
+        (Some(&min), Some(&max)) => (min, max),
+        _ => panic!("--zooms must list at least one zoom level"),
+    };
+    let params = tiler::TileParams::new(grid_zoom, min_zoom, 6, 8192, 4.0);
 
     let mut osm_reader = OsmReader::from_file(&args.osm_file);
 
@@ -282,7 +295,7 @@ fn main() {
     indicator.unset_length();
     println!("Road junctions: {}", connectivity.junction_count());
 
-    let sink = TileSink::new(&args.spill, params, ZOOMS.to_vec());
+    let sink = TileSink::new(&args.spill, params, zooms);
     // Forests are streamed into a global raster mask for coarse-zoom aggregation;
     // the tee forwards every shape to the sink (which skips raw forests at coarse
     // zooms) while burning forests into the mask.

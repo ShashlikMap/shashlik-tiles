@@ -30,12 +30,16 @@ pub struct PmTilesReader<R> {
     reader: R,
     header: Header,
     root: Vec<DirEntry>,
+    /// Materialized zoom levels, parsed from the archive metadata at open time
+    /// (falls back to `min_zoom..=max_zoom` for archives without the field).
+    zoom_levels: Vec<u8>,
     /// LRU of parsed leaf directories, keyed by their offset in the leaf section.
     leaves: Mutex<LeafCache>,
 }
 
 impl<R: RangeReader> PmTilesReader<R> {
-    /// Open a PMTiles archive: read + parse the header and root directory.
+    /// Open a PMTiles archive: read + parse the header, root directory, and
+    /// metadata (for the materialized zoom-level set).
     pub async fn open(reader: R) -> io::Result<Self> {
         let head = reader.read_range(0, util::pmtiles::HEADER_LEN).await?;
         let header = Header::parse(&head)
@@ -45,10 +49,16 @@ impl<R: RangeReader> PmTilesReader<R> {
             .await?;
         let root = parse_directory(&root_bytes)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "corrupt root directory"))?;
+        let metadata = reader
+            .read_range(header.metadata_offset, header.metadata_length as usize)
+            .await?;
+        let zoom_levels = util::pmtiles::parse_zoom_levels(&metadata)
+            .unwrap_or_else(|| (header.min_zoom..=header.max_zoom).collect());
         Ok(Self {
             reader,
             header,
             root,
+            zoom_levels,
             leaves: Mutex::new(LeafCache::new(LEAF_CACHE_CAP)),
         })
     }
@@ -215,6 +225,10 @@ impl<R: RangeReader> TileSource for PmTilesReader<R> {
 
     fn max_zoom(&self) -> u8 {
         self.header.max_zoom
+    }
+
+    fn zoom_levels(&self) -> Vec<u8> {
+        self.zoom_levels.clone()
     }
 }
 

@@ -20,7 +20,7 @@ pub async fn open_world(source: &str) -> World {
             Box::new(FileRangeReader::open(source).await.unwrap())
         };
     let source = PmTilesReader::open(reader).await.unwrap();
-    let cache = TileCache::new(source, vec![4, 6, 8, 10, 12, 14], 256 << 20, 0);
+    let cache = TileCache::from_source(source, 256 << 20, 0);
     SceneView::new(cache)
 }
 
