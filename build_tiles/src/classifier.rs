@@ -4,7 +4,7 @@ use crate::shapes::{AreaKind, LabelClass, Lanes, PoiKind, RoadKind, RoadStructur
 use hashbrown::HashMap;
 use osm_pbf::tags::Tag;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShapeClassification {
     Road(RoadKind),
     Area(AreaKind),
@@ -260,7 +260,7 @@ impl BlockShapeClassifier {
                 if let Some(motorway_link) = &self.motorway_link
                     && &tag.value == motorway_link
                 {
-                    return ShapeClassification::Road(RoadKind::Motorway);
+                    return ShapeClassification::Road(RoadKind::MotorwayLink);
                 }
                 if let Some(trunk) = &self.trunk
                     && &tag.value == trunk
@@ -270,7 +270,7 @@ impl BlockShapeClassifier {
                 if let Some(trunk_link) = &self.trunk_link
                     && &tag.value == trunk_link
                 {
-                    return ShapeClassification::Road(RoadKind::Trunk);
+                    return ShapeClassification::Road(RoadKind::TrunkLink);
                 }
                 if let Some(primary) = &self.primary
                     && &tag.value == primary
@@ -280,7 +280,7 @@ impl BlockShapeClassifier {
                 if let Some(primary_link) = &self.primary_link
                     && &tag.value == primary_link
                 {
-                    return ShapeClassification::Road(RoadKind::Primary);
+                    return ShapeClassification::Road(RoadKind::PrimaryLink);
                 }
                 if let Some(service) = &self.service
                     && &tag.value == service
@@ -295,7 +295,7 @@ impl BlockShapeClassifier {
                 if let Some(secondary_link) = &self.secondary_link
                     && &tag.value == secondary_link
                 {
-                    return ShapeClassification::Road(RoadKind::Secondary);
+                    return ShapeClassification::Road(RoadKind::SecondaryLink);
                 }
                 if let Some(tertiary) = &self.tertiary
                     && &tag.value == tertiary
@@ -305,7 +305,7 @@ impl BlockShapeClassifier {
                 if let Some(tertiary_link) = &self.tertiary_link
                     && &tag.value == tertiary_link
                 {
-                    return ShapeClassification::Road(RoadKind::Tertiary);
+                    return ShapeClassification::Road(RoadKind::TertiaryLink);
                 }
                 if let Some(unclassified) = &self.unclassified
                     && &tag.value == unclassified
@@ -450,6 +450,50 @@ mod tests {
     fn floors(pairs: &[(&str, &str)]) -> u8 {
         let (strings, tags) = tagset(pairs);
         BlockShapeClassifier::for_test().floors_of(&tags, &strings)
+    }
+
+    /// `classify_way` matches tag key/value against pre-resolved string IDs
+    /// on `self` (unlike `lanes_of`/`floors_of`, which look strings up
+    /// directly), so it needs a classifier actually built from a
+    /// `field name -> id` map instead of `for_test()`'s empty one, and tags
+    /// built from those same ids.
+    fn classify(highway_value: &str) -> ShapeClassification {
+        let mut string_map: HashMap<&[u8], u32> = HashMap::new();
+        let mut next_id = 0u32;
+        let mut id_of = |s: &str| -> u32 {
+            if let Some(&id) = string_map.get(s.as_bytes()) {
+                return id;
+            }
+            let id = next_id;
+            next_id += 1;
+            // Leak so the borrow can outlive this closure call without a
+            // separate arena — fine for a handful of short-lived test ids.
+            string_map.insert(Box::leak(s.to_string().into_boxed_str()).as_bytes(), id);
+            id
+        };
+        let highway_key = id_of("highway");
+        let value_id = id_of(highway_value);
+        let tags = vec![Tag::new((highway_key, value_id))];
+        BlockShapeClassifier::new(&string_map).classify_way(&tags)
+    }
+
+    #[test]
+    fn link_roads_classify_as_their_own_kind_not_the_parent_tier() {
+        // Regression test: `_link` ways used to collapse into the SAME
+        // `RoadKind` as their parent (e.g. `motorway_link` -> `Motorway`),
+        // discarding the one fact a renderer can't reconstruct from
+        // geometry alone — that this piece is a ramp/connector merging
+        // into a wider road, not a same-carriageway continuation of it.
+        assert_eq!(classify("motorway_link"), ShapeClassification::Road(RoadKind::MotorwayLink));
+        assert_eq!(classify("trunk_link"), ShapeClassification::Road(RoadKind::TrunkLink));
+        assert_eq!(classify("primary_link"), ShapeClassification::Road(RoadKind::PrimaryLink));
+        assert_eq!(classify("secondary_link"), ShapeClassification::Road(RoadKind::SecondaryLink));
+        assert_eq!(classify("tertiary_link"), ShapeClassification::Road(RoadKind::TertiaryLink));
+
+        // The parent tags themselves are unaffected.
+        assert_eq!(classify("motorway"), ShapeClassification::Road(RoadKind::Motorway));
+        assert!(RoadKind::MotorwayLink.is_link());
+        assert!(!RoadKind::Motorway.is_link());
     }
 
     #[test]

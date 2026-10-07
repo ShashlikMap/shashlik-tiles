@@ -68,21 +68,24 @@ pub struct TileParams {
     pub bucket_zoom: u8,
     /// Tile-local coordinate range; one tile spans `[0, extent]`.
     pub extent: i32,
-    /// Simplification tolerance for pyramid levels, in *rendered pixels*
-    /// (converted to tile-local units via `TILE_RENDER_PX`). Only affects
-    /// merged/coarse zooms — the base grid zoom is emitted at full detail.
+    /// Simplification tolerance for pyramid (non-base) zooms, in *rendered
+    /// pixels* (converted to tile-local units via `simplify_tolerance`).
     pub simplify_px: f64,
+    /// Assumed on-screen tile size in pixels, used to convert
+    /// `simplify_px` (and, in `tiler/sink.rs`, the
+    /// area-cull thresholds) into tile-local units. Was a fixed `512.0`
+    /// module constant; now per-run so it can be calibrated against
+    /// whatever the actual renderer's raster canvas size is, rather than a
+    /// generic web-map assumption.
+    pub tile_render_px: f64,
 }
-
-/// Assumed on-screen tile size in pixels, used to convert `TileParams::simplify_px`
-/// into tile-local simplification tolerance.
-pub const TILE_RENDER_PX: f64 = 512.0;
 
 /// Default configuration: z14 grid (z19 via client overzoom), z3 pyramid floor,
 /// z6 buckets, 8192 extent (~0.3 m at z14), **edge-exact clipping** — clipped
 /// pieces from adjacent tiles align exactly on the shared boundary and stitch
-/// with no overlap/artifacts — 2 px simplification on coarse zooms.
-pub const DEFAULT: TileParams = TileParams::new(14, 3, 6, 8192, 2.0);
+/// with no overlap/artifacts — 2 px simplification on every pyramid zoom (the base
+/// zoom is never simplified), assuming a 512px-rendered tile.
+pub const DEFAULT: TileParams = TileParams::new(14, 3, 6, 8192, 2.0, 512.0);
 
 impl TileParams {
     pub const fn new(
@@ -91,6 +94,7 @@ impl TileParams {
         bucket_zoom: u8,
         extent: i32,
         simplify_px: f64,
+        tile_render_px: f64,
     ) -> Self {
         Self {
             grid_zoom,
@@ -98,13 +102,15 @@ impl TileParams {
             bucket_zoom,
             extent,
             simplify_px,
+            tile_render_px,
         }
     }
 
-    /// Simplification tolerance in tile-local units.
+    /// Simplification tolerance in tile-local units, for the given rendered-
+    /// pixel tolerance (`simplify_px`).
     #[inline]
-    pub fn simplify_tolerance(&self) -> f64 {
-        (self.simplify_px * self.extent as f64 / TILE_RENDER_PX).max(1.0)
+    pub fn simplify_tolerance(&self, simplify_px: f64) -> f64 {
+        (simplify_px * self.extent as f64 / self.tile_render_px).max(1.0)
     }
 
     /// Total number of spill buckets

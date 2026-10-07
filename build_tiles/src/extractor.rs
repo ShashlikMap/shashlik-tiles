@@ -248,11 +248,21 @@ impl RoadConnectivity {
     /// Classify a road endpoint from its node id.
     #[inline]
     pub fn edge(&self, node_id: i64) -> EdgeNode {
-        if self.shared.contains(node_id as u64) {
+        if self.is_junction(node_id) {
             EdgeNode::Connected
         } else {
             EdgeNode::Disconnected
         }
+    }
+
+    /// Whether `node_id` is referenced by two or more roads -- a junction,
+    /// interior point or endpoint alike. `edge` above is the endpoint-only
+    /// special case of this same check; `extract_ways` also uses this
+    /// directly to flag *interior* junction points (see `Road::junctions`'s
+    /// doc comment) for simplification to pin.
+    #[inline]
+    pub fn is_junction(&self, node_id: i64) -> bool {
+        self.shared.contains(node_id as u64)
     }
 
     /// Number of junction nodes — diagnostics only.
@@ -445,6 +455,17 @@ pub fn extract_ways(
                 .filter_map(|id| coords.get(id).copied())
                 .collect()
         };
+        // Same filter as `line` above (`coords.get(id)` succeeding), kept
+        // as a literally identical predicate rather than derived from
+        // `line`'s own output, so a road's `junctions` always lines up
+        // index-for-index with its `geometry` -- see `Road::junctions`'s
+        // doc comment for why that alignment matters.
+        let junctions_for = |refs: &[i64]| -> Vec<bool> {
+            refs.iter()
+                .filter(|&id| coords.contains_key(id))
+                .map(|&id| connectivity.is_junction(id))
+                .collect()
+        };
         for way in kept {
             match way {
                 KeptWay::Road {
@@ -457,9 +478,11 @@ pub fn extract_ways(
                 } => {
                     let start = connectivity.edge(refs[0]);
                     let end = connectivity.edge(refs[refs.len() - 1]);
+                    let junctions = junctions_for(&refs);
                     sink.push(
                         Road::new(kind, line(&refs), start, end, layer, lanes, name)
                             .with_structure(structure)
+                            .with_junctions(junctions)
                             .into(),
                     );
                 }

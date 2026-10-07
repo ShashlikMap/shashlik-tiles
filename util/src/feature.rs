@@ -30,6 +30,21 @@ pub enum RoadKind {
     /// Country border (`boundary=administrative`, `admin_level=2`). A linear
     /// overlay riding the road pipeline; the renderer styles it distinctly.
     Border,
+    /// `highway=motorway_link` — a ramp/connector, not a same-carriageway
+    /// continuation of `Motorway`. Kept as its own kind (not collapsed into
+    /// the parent tier, as it was before) so a renderer can tell "this piece
+    /// is a ramp merging into a wider road" from a real lane-count change on
+    /// the same road — a distinction plain geometry (width ratio, tangent
+    /// alignment) can't reliably make. See `Self::is_link`.
+    MotorwayLink,
+    /// `highway=trunk_link` — see `Self::MotorwayLink`.
+    TrunkLink,
+    /// `highway=primary_link` — see `Self::MotorwayLink`.
+    PrimaryLink,
+    /// `highway=secondary_link` — see `Self::MotorwayLink`.
+    SecondaryLink,
+    /// `highway=tertiary_link` — see `Self::MotorwayLink`.
+    TertiaryLink,
 }
 
 impl RoadKind {
@@ -52,8 +67,21 @@ impl RoadKind {
             13 => Rail,
             14 => RailMinor,
             15 => Border,
+            16 => MotorwayLink,
+            17 => TrunkLink,
+            18 => PrimaryLink,
+            19 => SecondaryLink,
+            20 => TertiaryLink,
             _ => return None,
         })
+    }
+
+    /// A ramp/connector (`*_link`) rather than a same-carriageway road. The
+    /// one bit of semantic information plain geometry can't reconstruct at
+    /// render time — see the type's own doc comment.
+    pub fn is_link(self) -> bool {
+        use RoadKind::*;
+        matches!(self, MotorwayLink | TrunkLink | PrimaryLink | SecondaryLink | TertiaryLink)
     }
 
     /// Build threshold: coarsest zoom a road of this kind is materialized
@@ -64,11 +92,11 @@ impl RoadKind {
         match self {
             MajorRoad => 4,
             Border => 4,
-            Motorway | Trunk | Primary => 10,
-            Secondary => 12,
+            Motorway | Trunk | Primary | MotorwayLink | TrunkLink | PrimaryLink => 10,
+            Secondary | SecondaryLink => 12,
             Rail => 12,
             RailMinor => 14,
-            Tertiary | Unclassified | Residential | Raceway => 14,
+            Tertiary | Unclassified | Residential | Raceway | TertiaryLink => 14,
             LivingStreet | Service | Footway | Unknown => 16,
         }
     }
@@ -98,6 +126,9 @@ impl RoadKind {
             Service | Footway => 1.0,
             Rail | RailMinor => 1.0,
             Border => 1.0, // not a carriageway; the pixel floor dominates
+            // Ramps are almost always single-lane in reality, unlike the
+            // wide default for their parent tier.
+            MotorwayLink | TrunkLink | PrimaryLink | SecondaryLink | TertiaryLink => 1.0,
         }
     }
 
@@ -109,11 +140,11 @@ impl RoadKind {
         match self {
             MajorRoad => 5,
             Border => 4,
-            Motorway | Trunk | Primary => 10,
+            Motorway | Trunk | Primary | MotorwayLink | TrunkLink | PrimaryLink => 10,
             Rail => 12,
             RailMinor => 14,
-            Secondary => 13,
-            Tertiary | Unclassified | Residential | Raceway => 15,
+            Secondary | SecondaryLink => 13,
+            Tertiary | Unclassified | Residential | Raceway | TertiaryLink => 15,
             LivingStreet | Service | Footway | Unknown => 17,
         }
     }

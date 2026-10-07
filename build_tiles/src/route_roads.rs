@@ -44,7 +44,7 @@ impl RelationFeature for RouteRoads {
                 matches!(
                     resolved.get(w),
                     Some(ResolvedWay {
-                        class: ShapeClassification::Road(RoadKind::Motorway),
+                        class: ShapeClassification::Road(RoadKind::Motorway | RoadKind::MotorwayLink),
                         ..
                     })
                 )

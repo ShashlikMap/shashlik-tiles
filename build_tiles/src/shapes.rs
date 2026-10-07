@@ -45,6 +45,26 @@ pub struct Road {
     pub name: Option<String>,
     /// Bridge/tunnel grade separation (default [`RoadStructure::None`]).
     pub structure: RoadStructure,
+    /// One entry per `geometry` point, same length and order -- `true` iff
+    /// that point's original OSM node is shared with another road (a real
+    /// junction, whether it's this way's own endpoint or an interior point
+    /// a *different* way ends at). See `extractor::RoadConnectivity` for
+    /// how this gets computed, and
+    /// `tiler::sink::TileSink::clip_road_at`/`simplify_road_segments` for
+    /// why it matters at simplification time: independently
+    /// Visvalingam-Whyatt-simplifying each way can drop an interior point
+    /// that's another way's exact junction endpoint, visibly
+    /// disconnecting the network (confirmed on real hardware) -- knowing
+    /// which points are shared lets simplification pin them instead.
+    ///
+    /// Empty for roads with no such data available (merged/synthetic
+    /// strokes -- `route_roads`/`borders` chain multiple ways into one
+    /// stroke with no per-point node ids left to check), which degrades to
+    /// whole-line simplification with no junction protection. Never
+    /// partially populated relative to `geometry` -- same length or empty,
+    /// nothing in between; only `extractor::extract_ways` has real
+    /// per-way node ids to compute this from.
+    pub junctions: Vec<bool>,
 }
 
 impl Road {
@@ -66,12 +86,20 @@ impl Road {
             lanes,
             name,
             structure: RoadStructure::None,
+            junctions: Vec::new(),
         }
     }
 
     /// Set the grade-separation structure (bridge/tunnel).
     pub fn with_structure(mut self, structure: RoadStructure) -> Self {
         self.structure = structure;
+        self
+    }
+
+    /// Attach per-point junction flags -- see `Road::junctions`'s doc
+    /// comment for the invariant (same length as `geometry`, or empty).
+    pub fn with_junctions(mut self, junctions: Vec<bool>) -> Self {
+        self.junctions = junctions;
         self
     }
 }

@@ -307,7 +307,7 @@ mod tests {
 
     // z2 grid (4×4 tiles), extent 4096, no margin.
     fn params() -> TileParams {
-        TileParams::new(2, 0, 0, 4096, 2.0)
+        TileParams::new(2, 0, 0, 4096, 2.0, 2.0, 512.0)
     }
 
     #[test]

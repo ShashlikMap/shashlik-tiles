@@ -5,8 +5,14 @@
 //! interchanges by good-continuation, then drop one carriageway of each parallel
 //! pair. The caller ([`crate::route_roads`]) selects *which* polylines to feed in
 //! (member ways of motorway-bearing route relations) and clips the result into
-//! the coarse tiles (`z <= ROAD_AGG_MAX_ZOOM`); raw ways cover `z >= 10`, so the
-//! two zoom ranges don't overlap.
+//! the coarse tiles (`z <= TileSink`'s `road_agg_max_zoom`, a runtime parameter
+//! -- see `tiler::sink::TileSink::new`, default `12`); raw `Motorway`/`Trunk`/
+//! `Primary` ways cover `z >= 10` (`RoadKind::min_zoom`) regardless of that
+//! setting -- the two zoom ranges *touch* at `z == 10` (both fire there) by
+//! original design, not a bug, but widening `road_agg_max_zoom` past `10`
+//! widens that touching range rather than eliminating it -- confirm the
+//! wider range still looks right (no visibly doubled-up major roads) when
+//! tuning it higher.
 
 use hashbrown::HashMap;
 use tiles::EARTH_RADIUS;
