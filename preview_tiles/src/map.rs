@@ -20,7 +20,7 @@ pub async fn open_world(source: &str) -> World {
             Box::new(FileRangeReader::open(source).await.unwrap())
         };
     let source = PmTilesReader::open(reader).await.unwrap();
-    let cache = TileCache::from_source(source, 256 << 20, 0);
+    let cache = TileCache::from_source(source, 128 << 20, 0);
     SceneView::new(cache)
 }
 
@@ -138,9 +138,9 @@ fn road_rank(kind: RoadKind) -> u8 {
         Footway | Service | LivingStreet | Raceway | Unknown => 0,
         Residential | Unclassified => 1,
         RailMinor | Rail => 2,
-        Tertiary | Secondary => 3,
-        Primary | Trunk => 4,
-        Motorway | MajorRoad => 5,
+        Tertiary | Secondary | TertiaryLink | SecondaryLink => 3,
+        Primary | Trunk | PrimaryLink | TrunkLink => 4,
+        Motorway | MajorRoad | MotorwayLink => 5,
         Border => 6,
     }
 }
@@ -171,8 +171,8 @@ fn road_color(kind: RoadKind) -> u32 {
         Rail => 9,
         RailMinor => 10,
         Border => 12,
-        Motorway | Trunk | Primary => 5,
-        Secondary | Tertiary => 6,
+        Motorway | Trunk | Primary | MotorwayLink | TrunkLink | PrimaryLink => 5,
+        Secondary | Tertiary | SecondaryLink | TertiaryLink => 6,
         _ => 7,
     }
 }
